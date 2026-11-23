@@ -1,0 +1,19 @@
+---
+description: Send work from this conversation to an Orbit orbiter (writes the brief, creates the task, tells you to arm orbit watch)
+argument-hint: <orbiterId> [--subject <name> | --repo <path> --project <name> [--line <branch>] [--after <taskId>] [--touches a/,b/]] [--title "…"]
+allowed-tools: Bash(orbit send:*), Bash(orbit status:*), Bash(orbit inbox:*), Bash(mktemp:*), Write
+---
+
+Send a task to an Orbit orbiter from this conversation. Arguments given: `$ARGUMENTS`.
+
+1. **Decide the target.** The first argument is the orbiter seat id (like `alice-orbiter-1`). If none was given, ask the user which orbiter, or look at `orbit status` / the conversation for the one they use.
+2. **Decide the kind.** `--subject <name>` is no-repo work (research, writing, a plan: files come back under `tasks/<taskId>/`). `--repo <path> --project <name>` is own-repo work: the repo at `<path>` travels as a git bundle through Mission Control (committed work only, `HEAD` with its history, or one snapshot commit of the tree; never the user's origin, and this Mac never touches the factory). Names are `[a-z0-9-]`. If the conversation is about a codebase you are working in, default to `--repo <its root> --project <its folder name>`; otherwise ask.
+   - **Shared bases (CONTRACT §24):** the station keeps one shared base per branch of the repo (`orbit/<station>/<project>/base-<line>`), and each task gets its own branch. `orbit send` sends the line's tip on the remote as `base`, plus your `HEAD` as `start` when it differs; unpushed commits ride on the task, never on the shared base. The line is HEAD's upstream branch, else the remote's default branch; `--line <branch>` overrides both.
+   - **One repo has one project name in a station.** If `orbit send` answers `repo_registered`, send again with the `--project` it prints.
+   - **Stacking your own tasks:** `--touches a/,b/` names the folders the task will write (one comma-separated value). If it overlaps one of your own busy tasks, Orbit stacks it after that task: it waits (`waiting on t-NNNN`) and starts from that task's result. `--after <taskId>` names the task to stack on; `folder_busy` means it overlaps more than one of your chains: name one with `--after`, or narrow `--touches`. Other people's tasks never stack yours: their work runs side by side and is joined in the repo.
+3. **Write the brief.** From the conversation, write the whole instruction for the orbiter as markdown (≤ 20,000 chars): the goal, what done looks like, constraints, where things are, how to test, and the house report format (Did / State / Need / Next). Never put a secret, a token or a key in it. Save it with the Write tool to a temp file: `BRIEF=$(mktemp -t orbit-brief).md`, or `/tmp/orbit-brief-<something>.md`.
+4. **Title**: ≤ 120 chars, from `--title` or the brief's first line.
+5. **Send**: `orbit send <orbiterId> --title "<title>" --brief-file <the file> --subject <name>` or `… --repo <path> --project <name>`. It builds `in.bundle`, creates the task, uploads the bundle and confirms it (the orbiter is rung by that confirmation). Show the printed `taskId`, `workBranch` and `bundle:` line to the user. If it fails after "task … created (sending)", run the printed `orbit send --resume <taskId>` once the cause is fixed; `orbit status` lists interrupted sends.
+6. **Arm the wake-up**: follow the `orbit-watch` skill now: run `orbit watch` as a background command (the Bash tool with `run_in_background: true`). Its exit is the ring; then run `/orbit-inbox`. Remind the user the Mac must stay awake.
+
+If `orbit send` fails on the pre-push check (a file over 95 MB, Git LFS, a pack over 500 MB, a shallow clone) it switches to snapshot mode by itself and says so; that is fine. If it fails for another reason, show the error and stop.

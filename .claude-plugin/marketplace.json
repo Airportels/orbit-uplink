@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "orbit",
+  "description": "Orbit: run teams of Claude Code sessions across devices and accounts. This marketplace carries Uplink, the Orbit seat plugin.",
+  "owner": {
+    "name": "Airportels"
+  },
+  "plugins": [
+    {
+      "name": "orbit",
+      "description": "Uplink: makes this Claude Code session an Orbit seat. SessionStart hook (station, seat, version, update notice, pending counts), /orbit-setup, /orbit-send, /orbit-inbox, /orbit-pull, /orbit-status, and the orbit-watch skill. /orbit:orbit-setup installs the orbit CLI (uplink/cli).",
+      "source": "./uplink/plugin",
+      "category": "productivity",
+      "homepage": "https://github.com/Airportels/orbit-uplink",
+      "author": {
+        "name": "Airportels"
+      }
+    }
+  ]
+}

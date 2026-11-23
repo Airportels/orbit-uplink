@@ -1,0 +1,33 @@
+{
+  "name": "@airportels/orbit-cli",
+  "version": "0.13.0",
+  "description": "Orbit Uplink: the `orbit` CLI for ground and cloud seats",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "bin": {
+    "orbit": "bin/orbit.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "config.example.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node test/run.mjs",
+    "test:only": "node --test test/*.test.mjs",
+    "mock-mc": "node test/mock-mc.mjs",
+    "fake-orbiter": "node test/fake-orbiter.mjs",
+    "gen:first-prompt": "node scripts/gen-first-prompt.mjs"
+  },
+  "dependencies": {
+    "firebase": "^13.4.0"
+  },
+  "orbit": {
+    "contractVersion": "0.13.0"
+  }
+}

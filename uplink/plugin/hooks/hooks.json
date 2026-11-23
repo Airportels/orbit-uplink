@@ -1,0 +1,16 @@
+{
+  "description": "Orbit Uplink: one status block at session start (station, seat, role, version, update notice, pending counts, rules).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh\"",
+            "timeout": 90
+          }
+        ]
+      }
+    ]
+  }
+}

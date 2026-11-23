@@ -1,0 +1,13 @@
+{
+  "name": "orbit",
+  "version": "0.13.0",
+  "description": "Orbit Uplink: makes this Claude Code session an Orbit seat (SessionStart hook, /orbit-* commands, the orbit-watch skill). /orbit:orbit-setup installs the `orbit` CLI (uplink/cli), signs in and enrols the seat.",
+  "author": {
+    "name": "Airportels"
+  },
+  "keywords": [
+    "orbit",
+    "uplink",
+    "seat"
+  ]
+}

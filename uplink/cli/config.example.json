@@ -1,0 +1,10 @@
+{
+  "mcUrl": "https://asia-southeast1-airportels-orbit.cloudfunctions.net",
+  "firebase": {
+    "apiKey": "<run `orbit setup` (or copy setup/orbit-config.json)>",
+    "authDomain": "airportels-orbit.firebaseapp.com",
+    "projectId": "airportels-orbit",
+    "databaseURL": "https://airportels-orbit-default-rtdb.asia-southeast1.firebasedatabase.app"
+  },
+  "marketplace": "orbit"
+}
