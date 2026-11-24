@@ -7,17 +7,29 @@
 // HOOK_UPDATE_BUDGET_MS), so the hook never kills this in the middle of a step: the two `claude plugin` steps get at most 15 s each,
 // the install gets what is left (at least 25 s) minus 5 s kept for `orbit --version`, and a step with no time left is skipped and
 // says so.
+// §38 (v0.13.2, X9–X11): the version comes from `--to <version>` (status --hook passes the heartbeat's latestVersion), else from a
+// heartbeat this command makes with the seat key; no seat, or Mission Control out of reach, exits 1, and a version that isn't above
+// this CLI's is "up to date" (no fetch, exit 0, never a downgrade). With a marketplace clone (W15 step 4: known_marketplaces.json's
+// installLocation first, then cloneDirs()) it runs as before. With none (a synced plugin, which updates through claude.ai) it skips
+// both `claude plugin` steps, fetches the source copy at that version (source-copy.js, X2's rules) in a step capped at 30 s of the
+// budget, installs the CLI from it and runs the version step; it exits 0 only when all three succeed, then prunes old copies (X4).
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { readConfig } from '../store.js';
-import { UPLINK_VERSION, CLI_ROOT } from '../version.js';
+import { readConfig, readSeat } from '../store.js';
+import { UPLINK_VERSION, CLI_ROOT, compareVersions } from '../version.js';
+import { parseArgs } from '../args.js';
+import { seatClient } from '../mc.js';
+import { McError } from '../errors.js';
+import { ensureCopy as fetchCopy, pruneCopies, VERSION_RE } from '../source-copy.js';
 import { ctx as platformCtx, runNpm, runClaude, runOrbit, layout, splitLines } from '../platform.js';
 
 export const UPDATE_BUDGET_MS = Number(process.env.ORBIT_UPDATE_BUDGET_MS || 60_000);
 export const PLUGIN_STEP_MS = 15_000;
 export const VERSION_STEP_MS = 5_000;
+/** X9: with no clone, the source copy's fetch is one step, capped at 30 s of the budget. */
+export const FETCH_STEP_MS = 30_000;
 
 /**
  * Each step's timeout from the time left: a `claude plugin` step ≤ 15 s, npm everything left but the 5 s kept for the
@@ -26,6 +38,7 @@ export const VERSION_STEP_MS = 5_000;
 export function stepTimeout(step, remainingMs) {
   if (step === 'npm') return Math.max(0, remainingMs - VERSION_STEP_MS);
   if (step === 'version') return Math.max(0, Math.min(VERSION_STEP_MS, remainingMs));
+  if (step === 'fetch') return Math.max(0, Math.min(FETCH_STEP_MS, remainingMs));
   return Math.max(0, Math.min(PLUGIN_STEP_MS, remainingMs));
 }
 
@@ -36,6 +49,48 @@ export function stepTimeout(step, remainingMs) {
 export function cloneDirs(mp = 'orbit') {
   const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
   return [...new Set([join(configDir, 'plugins', 'marketplaces', mp), join(homedir(), '.claude', 'plugins', 'marketplaces', mp)])];
+}
+
+/**
+ * §38 X9 (W15 step 4's order, from the CLI's side): the marketplace clone's uplink/cli, or null. First each plugins root's
+ * known_marketplaces.json `installLocation` for `mp` (the CLAUDE_CONFIG_DIR profile's, then ~/.claude's), then cloneDirs(). A
+ * candidate counts when its uplink/cli/package.json is there.
+ */
+export function cloneCli(mp = 'orbit') {
+  const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+  const roots = [...new Set([join(configDir, 'plugins'), join(homedir(), '.claude', 'plugins')])];
+  const located = roots.map((r) => {
+    try {
+      const loc = JSON.parse(readFileSync(join(r, 'known_marketplaces.json'), 'utf8'))?.[mp]?.installLocation;
+      return typeof loc === 'string' && loc ? loc : null;
+    } catch { return null; }
+  }).filter(Boolean);
+  return [...new Set([...located, ...cloneDirs(mp)])].map((d) => join(d, 'uplink', 'cli')).find((p) => existsSync(join(p, 'package.json'))) ?? null;
+}
+
+/**
+ * X9: the version to install. `--to <version>` as given (it must be x.y.z); else the latestVersion of a heartbeat made now with the
+ * seat key (a 426 names it too). Never from the tags. → { to } or { exit: 1, line } (no seat, Mission Control out of reach, a bad
+ * --to, or no latestVersion in the answer).
+ */
+export async function targetVersion(args, { seat = readSeat(), timeoutMs = 10_000 } = {}) {
+  if (args.to !== undefined) {
+    const to = String(args.to);
+    return args.to !== true && VERSION_RE.test(to) ? { to } : { exit: 1, line: `orbit update: --to takes a version like 1.2.3${args.to === true ? '' : ` (got "${to}")`}.` };
+  }
+  if (!seat) return { exit: 1, line: 'orbit update: this device has no seat yet, so Mission Control can\'t say which version is the latest. Run /orbit:orbit-setup in Claude Code (or `orbit setup`), or pass --to <version>.' };
+  let latest;
+  try {
+    latest = (await seatClient(seat, { timeoutMs }).call('heartbeat', { uplinkVersion: UPLINK_VERSION, state: 'idle' }))?.latestVersion;
+  } catch (e) {
+    if (e instanceof McError && e.status === 426) { // below the minimum: the refusal names the latest version too
+      const b = typeof e.body === 'object' ? e.body?.error ?? e.body : {};
+      latest = (b?.details ?? b ?? {})?.latestVersion;
+    } else {
+      return { exit: 1, line: `orbit update: Mission Control can't be reached (${splitLines(String(e.message ?? e)).pop()}), so the latest version isn't known. Try again later, or pass --to <version>.` };
+    }
+  }
+  return typeof latest === 'string' && VERSION_RE.test(latest) ? { to: latest } : { exit: 1, line: 'orbit update: Mission Control didn\'t name a latest version. Try again later, or pass --to <version>.' };
 }
 
 /**
@@ -136,18 +191,32 @@ export async function run(argv = [], o = {}) {
     process.stderr.write(r.stderr ?? '');
     return r.status ?? 1;
   }
+  // X9: the version first; nothing runs for a version that isn't above this one (never a downgrade)
+  const target = await (o.targetVersion ?? targetVersion)(parseArgs(argv, {}));
+  if (target.exit) { console.log(target.line); return target.exit; }
+  const to = target.to;
+  if (compareVersions(to, UPLINK_VERSION) <= 0) { console.log(`orbit update: up to date (Uplink ${UPLINK_VERSION}; the latest is ${to}).`); return 0; }
   const cfg = readConfig();
   const mp = cfg.marketplace || 'orbit';
   const plugin = `orbit@${mp}`;
-  const steps = [];
-  const deadline = Date.now() + UPDATE_BUDGET_MS;
+  const steps = [`update to ${to}`];
+  const deadline = Date.now() + (o.budgetMs ?? UPDATE_BUDGET_MS);
   const left = () => deadline - Date.now();
   const c = platformCtx(o);
-  const mu = c.win ? claude(['plugin', 'marketplace', 'update', mp], stepTimeout('plugin', left()), c) : sh('claude', ['plugin', 'marketplace', 'update', mp], stepTimeout('plugin', left()));
-  steps.push(`marketplace ${mp}: ${mu.ok ? 'updated' : `failed (${why(mu)})`}`);
-  const pu = c.win ? claude(['plugin', 'update', plugin], stepTimeout('plugin', left()), c) : sh('claude', ['plugin', 'update', plugin], stepTimeout('plugin', left()));
-  steps.push(`plugin ${plugin}: ${pu.ok ? 'updated (restart the session to load it)' : `failed (${why(pu)})`}`);
-  const cliDir = cloneDirs(mp).map((d) => join(d, 'uplink', 'cli')).find((p) => existsSync(join(p, 'package.json')));
+  const clone = cloneCli(mp);
+  let mu = { ok: true }, pu = { ok: true }, fetched = null;
+  if (clone) { // as before 0.13.2
+    mu = c.win ? claude(['plugin', 'marketplace', 'update', mp], stepTimeout('plugin', left()), c) : sh('claude', ['plugin', 'marketplace', 'update', mp], stepTimeout('plugin', left()));
+    steps.push(`marketplace ${mp}: ${mu.ok ? 'updated' : `failed (${why(mu)})`}`);
+    pu = c.win ? claude(['plugin', 'update', plugin], stepTimeout('plugin', left()), c) : sh('claude', ['plugin', 'update', plugin], stepTimeout('plugin', left()));
+    steps.push(`plugin ${plugin}: ${pu.ok ? 'updated (restart the session to load it)' : `failed (${why(pu)})`}`);
+  } else { // X9: a synced plugin (no clone) updates through claude.ai; the CLI comes from the source copy at `to`
+    steps.push(`plugin ${plugin}: no marketplace clone on this device (a plugin added in the Claude app updates through claude.ai)`);
+    const ft = stepTimeout('fetch', left());
+    fetched = ft < 1000 ? { ok: false, code: 'skipped', message: 'skipped: no time left in the update budget' } : (o.ensureCopy ?? fetchCopy)(to, { timeoutMs: ft }, o);
+    steps.push(`copy ${to}: ${fetched.ok ? `${fetched.fetched ? 'fetched' : 'already there'} (${fetched.dir})` : `failed (${splitLines(fetched.message ?? '').pop() || fetched.code})`}`);
+  }
+  const cliDir = clone ?? (fetched?.ok ? join(fetched.dir, 'uplink', 'cli') : null);
   // V69: where the running orbit lives: the person's own folder when it runs from there, else Node's global folder (no --prefix).
   // W10, W24: on win32 always npm's global folder, never --prefix; `npm prefix -g` says where it is, once, before the install.
   const prefix = !c.win && runsFromOwnFolder() ? ownPrefix() : undefined;
@@ -163,27 +232,36 @@ export async function run(argv = [], o = {}) {
         : splitLines((pre.stderr ?? '').trim()).filter(Boolean).pop() || `exit ${pre.status ?? code}`;
     }
   }
+  let installed = false;
   if (cliDir) {
     const budget = stepTimeout('npm', left());
     const ni = budget < 1000 ? { ok: false, out: 'skipped: no time left in the update budget' } : installCli(cliDir, budget, { prefix }, o); // a copy, from 0.13.0 (§35.2)
+    installed = ni.ok;
     const where = prefix ?? globalPrefix;
     steps.push(`cli from ${cliDir}: ${ni.ok ? `installed (a copy)${where ? ` in ${where}` : ''}` : `failed (${splitLines(ni.out).pop()})`}`);
-  } else {
-    steps.push(`cli: marketplace checkout not found under ${cloneDirs(mp)[0]}; reinstall with: orbit setup (or /orbit:orbit-setup in Claude Code)`);
+  } else { // X10: the fetch didn't finish; the next session's hook tries again
+    steps.push(`cli: not installed (no copy of ${to}); the next session tries again, or run /orbit:orbit-setup`);
   }
+  let versionOk = false;
   if (c.win) { // W6b: that folder's orbit.js, with Node, never through its shim
     if (!globalPrefix) steps.push(`orbit --version now: unknown, npm prefix -g failed (${prefixFailed}) (was ${UPLINK_VERSION})`);
     else {
       const vt = stepTimeout('version', left());
       const vr = vt < 1000 ? { status: null } : runOrbit(layout(globalPrefix, c).orbitJs, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: vt }, c);
       const v = vr.status === 0 ? splitLines((vr.stdout ?? '').trim())[0] : '';
+      versionOk = !!v;
       steps.push(`orbit --version now: ${v || `(was ${UPLINK_VERSION})`}`);
     }
   } else {
     // the person's own folder may not be on this process's PATH (the hook finds it by its full path): ask that copy by its full path
     const vr = sh(prefix ? join(prefix, 'bin', 'orbit') : 'orbit', ['--version'], stepTimeout('version', left()));
+    versionOk = vr.ok;
     steps.push(`orbit --version now: ${vr.ok ? vr.out : `(was ${UPLINK_VERSION})`}`);
   }
   console.log(steps.join('\n'));
-  return mu.ok && pu.ok ? 0 : 1;
+  if (clone) return mu.ok && pu.ok ? 0 : 1;
+  // X9: with no clone, 0 only when the fetch, the install and the version step all succeeded; then X4's pruning (never the exit code)
+  const ok = !!fetched?.ok && installed && versionOk;
+  if (ok) (o.pruneCopies ?? pruneCopies)(to, o);
+  return ok ? 0 : 1;
 }

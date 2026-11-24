@@ -16,17 +16,41 @@ commands and the `orbit-watch` skill) and the `orbit` command-line tool.
   - On Windows: download the Windows Installer (.msi) from https://nodejs.org and run it, keeping its default options (or, in
     PowerShell, `winget install OpenJS.NodeJS.LTS`). Volta isn't supported.
 - git.
-  - On a Mac: run `xcode-select --install` in Terminal, or type `git` there and macOS offers to install it.
+  - On a Mac: run `xcode-select --install` in Terminal, or type `git` there and macOS offers to install it. If a window offers to
+    install the command line developer tools, click Install.
   - On Windows: install Git for Windows from https://git-scm.com/downloads/win, keeping its recommended PATH option (or, in
     PowerShell, `winget install --id Git.Git -e --source winget`).
-- Claude Code.
+- The Claude desktop app (its **Code** tab), or Claude Code in a terminal.
 - The Google account an admin invited.
 
-On Windows, after installing Node.js or git, close and reopen your terminal and start a new Claude Code session before you go on.
+After installing Node.js or git, quit and reopen the Claude app (or your terminal) and start a new Claude Code session before you go
+on.
 
 ## Set up this computer
 
-In Claude Code, type these four lines, one at a time:
+1. In the Claude desktop app: **Customize → Plugins → Add marketplace → Add from a repository**, enter `Airportels/orbit-uplink`,
+   and install **Orbit**. On claude.ai the steps are the same.
+2. In the desktop app's **Code** tab, or Claude Code in a terminal: type `/orbit:orbit-setup`, then sign in with Google (use the
+   account you were invited at). If Claude asks, click **Allow**.
+
+`/orbit:orbit-setup` fetches and installs the `orbit` tool, opens a browser tab for the Google sign-in, and makes this computer your
+seat. Then start a new Claude Code session: its first block shows your seat. Running `/orbit:orbit-setup` again is safe, and it is
+also how a broken setup is put right.
+
+- **The Chat tab can't run Orbit.** Use the Code tab, or Claude Code in a terminal.
+- **Install Orbit from one place only:** the click path above, or the terminal marketplace below, not both.
+
+## Other ways in
+
+**Claude Code in a terminal** (Claude Code 2.1.275 or later):
+
+```
+/plugin install orbit --marketplace Airportels/orbit-uplink
+/reload-plugins
+/orbit:orbit-setup
+```
+
+**Older Claude Code.** Type these four lines, one at a time:
 
 ```
 /plugin marketplace add Airportels/orbit-uplink
@@ -35,13 +59,7 @@ In Claude Code, type these four lines, one at a time:
 /orbit:orbit-setup
 ```
 
-`/orbit:orbit-setup` installs the `orbit` tool, opens a browser tab for Google sign-in (use the account you were invited at), and
-makes this computer your seat. Then start a new Claude Code session: its first block shows your seat. Running `/orbit:orbit-setup`
-again is safe, and it is also how a broken setup is put right.
-
-## Other ways in
-
-**Claude Code in a terminal.** Type the same four lines at the `claude` prompt. Or, from a shell:
+**From a shell:**
 
 ```
 claude plugin marketplace add Airportels/orbit-uplink
@@ -79,6 +97,9 @@ loads your installed plugins and runs their SessionStart hooks. Otherwise use th
 `orbit inbox`, `orbit pull` and `orbit watch` work the same.
 
 ## If it says…
+
+**"… checkout … not found … /plugin marketplace add".** Your Orbit plugin is older than 0.13.2. Remove it in **Customize → Plugins**,
+and add it again (the click path above).
 
 **`not_on_path` (Windows).** npm's global folder isn't on your PATH. Press Win+R and run
 `rundll32 sysdm.cpl,EditEnvironmentVariables`. Under your user variables select Path, click Edit, then New, paste the folder setup

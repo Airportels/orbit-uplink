@@ -1,5 +1,5 @@
 // orbit login [--handle <h>] [--port <n>] [--no-open] (D3)
-// Browser flow: a loopback server serves a tiny page with a "Sign in with Google" button (signInWithPopup from the click, plus one
+// Browser flow: a loopback server serves a page in Orbit's look (§38 X17) with a "Continue with Google" button (signInWithPopup from the click, plus one
 // automatic attempt on load; a blocked pop-up leaves the button, with the fix named); the page posts the ID + refresh token back,
 // then the CLI stores person.json (0600) and calls registerPerson. The callback carries a per-login random `state` the page got
 // from the loopback server: a callback without it (another page posting to localhost) is refused with 403.
@@ -56,18 +56,125 @@ export function checkCallback(body, state) {
  * failure of 11-18) or fails for any other reason, the status line names the fix and the button retries. Never signInWithRedirect:
  * the page is served by a one-shot loopback server and a redirect round-trip loses it.
  */
+/**
+ * §38 X17 (0.13.2): the words of the sign-in page, EN and TH. The page picks one set by navigator.language (`th…` is Thai); the HTML
+ * itself carries the English set, so a browser without JavaScript still reads a sentence. `{code}` and `{why}` are filled in.
+ */
+export const PAGE_WORDS = {
+  en: {
+    lang: 'en',
+    title: 'Connect this computer to Orbit',
+    sub: 'Sign in with the Google account you were invited with',
+    button: 'Continue with Google',
+    opening: 'Opening Google sign-in…',
+    blocked: 'Your browser blocked the Google window. Allow pop-ups for this page, then press Continue with Google again',
+    done: 'Signed in. Go back to Claude to finish. You can close this tab',
+    failed: 'Sign-in didn\'t finish ({code}). Press Continue with Google to try again',
+    refused: 'Orbit didn\'t accept the sign-in: {why}. Press Continue with Google to try again',
+    foot: 'Orbit runs this page on your own computer, only for this sign-in.',
+  },
+  th: {
+    lang: 'th',
+    title: 'เชื่อมต่อคอมพิวเตอร์เครื่องนี้กับ Orbit',
+    sub: 'ลงชื่อเข้าใช้ด้วยบัญชี Google ที่ได้รับคำเชิญ',
+    button: 'ดำเนินการต่อด้วย Google',
+    opening: 'กำลังเปิดหน้าลงชื่อเข้าใช้ Google…',
+    blocked: 'เบราว์เซอร์บล็อกหน้าต่าง Google อนุญาตป๊อปอัปสำหรับหน้านี้ แล้วกด ดำเนินการต่อด้วย Google อีกครั้ง',
+    done: 'ลงชื่อเข้าใช้แล้ว กลับไปที่ Claude เพื่อทำให้เสร็จ ปิดแท็บนี้ได้เลย',
+    failed: 'ลงชื่อเข้าใช้ไม่สำเร็จ ({code}) กด ดำเนินการต่อด้วย Google เพื่อลองอีกครั้ง',
+    refused: 'Orbit ไม่รับการลงชื่อเข้าใช้: {why} กด ดำเนินการต่อด้วย Google เพื่อลองอีกครั้ง',
+    foot: 'Orbit เปิดหน้านี้บนคอมพิวเตอร์ของคุณเอง สำหรับการลงชื่อเข้าใช้ครั้งนี้เท่านั้น',
+  },
+};
+
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+/**
+ * The loopback sign-in page (§38 X17: Orbit's look, the mechanism unchanged). Inline CSS only, with the Console's default brand
+ * (violet) colours, type scale and radius copied from console/src/styles/theme.css; light and dark by prefers-color-scheme; nothing
+ * else is loaded (no stylesheet, font or image): the Firebase SDK from gstatic stays the only outside origin. The script is as
+ * before: signInWithPopup on the click, one automatic attempt on load, prompt: select_account (no `hd`, §34.3), the per-login
+ * `state` in the callback, and the emulator when `authEmu` is set.
+ */
 export function page({ fb, authEmu, state = '' }) {
   const cfg = JSON.stringify({ apiKey: fb.apiKey, authDomain: fb.authDomain, projectId: fb.projectId });
-  return `<!doctype html><meta charset="utf-8"><title>orbit login</title>
-<body style="font:16px system-ui;margin:3rem;max-width:40rem">
-<h1>Orbit: sign in</h1>
-<p id="s">Opening Google sign-in…</p>
-<p><button id="b" type="button" style="font:inherit;padding:.6em 1.2em">Sign in with Google</button></p>
+  const en = PAGE_WORDS.en;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Orbit · Connect this computer</title>
+<style>
+:root {
+  --brand: oklch(0.566 0.147 289); --brand-hover: oklch(0.470 0.135 289); --brand-fg: oklch(1 0 0);
+  --background: oklch(0.925 0.020 282); --card: oklch(0.982 0.006 282); --foreground: oklch(0.353 0.024 282);
+  --muted-foreground: oklch(0.500 0.028 282); --border: oklch(0.880 0.024 282); --ring: oklch(0.566 0.147 289);
+  --danger: oklch(0.524 0.129 22); --success: oklch(0.492 0.149 137);
+  --radius-md: 12px; --radius-xl: 24px; --radius-full: 9999px;
+  --font-sans: 'IBM Plex Sans Thai', -apple-system, 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Mitr', 'IBM Plex Sans Thai', system-ui, sans-serif;
+  --text-caption: 13px; --text-small: 14px; --text-body: 16px; --text-title: 24px;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand: oklch(0.660 0.143 289); --brand-hover: oklch(0.740 0.125 289); --brand-fg: oklch(0.228 0.043 282);
+    --background: oklch(0.228 0.043 282); --card: oklch(0.302 0.039 282); --foreground: oklch(0.96 0.012 280);
+    --muted-foreground: oklch(0.712 0.033 282); --border: color-mix(in oklch, oklch(0.390 0.115 289) 60%, transparent);
+    --ring: oklch(0.740 0.125 289); --danger: oklch(0.684 0.136 22); --success: oklch(0.802 0.178 137);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; background: var(--background); color: var(--foreground);
+  font: var(--text-body)/1.65 var(--font-sans); -webkit-font-smoothing: antialiased; }
+main { width: 100%; max-width: 440px; display: grid; gap: 20px; }
+.mark { display: flex; align-items: center; justify-content: center; gap: 10px; font: 500 22px/1 var(--font-display); letter-spacing: .01em; }
+.mark svg { width: 28px; height: 28px; color: var(--brand); }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); padding: 32px 28px; display: grid; gap: 14px;
+  text-align: center; box-shadow: 0 1px 2px rgb(0 0 0 / .04), 0 12px 32px -12px rgb(0 0 0 / .18); }
+h1 { margin: 0; font: 500 var(--text-title)/1.3 var(--font-display); text-wrap: balance; }
+.sub { margin: 0; color: var(--muted-foreground); font-size: var(--text-small); line-height: 1.55; text-wrap: pretty; }
+button { margin-top: 8px; width: 100%; min-height: 48px; border: 0; border-radius: var(--radius-full); background: var(--brand); color: var(--brand-fg);
+  font: 500 var(--text-body)/1 var(--font-sans); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  transition: background-color .15s ease; }
+button:hover:not(:disabled) { background: var(--brand-hover); }
+button:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+button:disabled { opacity: .6; cursor: progress; }
+button[hidden] { display: none; }
+.status { margin: 0; min-height: 1.55em; font-size: var(--text-small); line-height: 1.55; color: var(--muted-foreground); text-wrap: pretty; }
+.status[data-tone="error"] { color: var(--danger); }
+.status[data-tone="done"] { color: var(--success); font-weight: 500; font-size: var(--text-body); }
+.foot { margin: 0; text-align: center; color: var(--muted-foreground); font-size: var(--text-caption); }
+@media (prefers-reduced-motion: reduce) { button { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+<div class="mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><ellipse cx="16" cy="16" rx="13" ry="7" transform="rotate(-24 16 16)" stroke="currentColor" stroke-width="2.4"/><circle cx="16" cy="16" r="4.5" fill="currentColor"/></svg><span>Orbit</span></div>
+<section class="card" aria-labelledby="t">
+<h1 id="t">${esc(en.title)}</h1>
+<p class="sub" id="u">${esc(en.sub)}</p>
+<button id="b" type="button">${esc(en.button)}</button>
+<p class="status" id="s" role="status" aria-live="polite">${esc(en.opening)}</p>
+</section>
+<p class="foot" id="f">${esc(en.foot)}</p>
+</main>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/${FIREBASE_JS_VERSION}/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, connectAuthEmulator } from "https://www.gstatic.com/firebasejs/${FIREBASE_JS_VERSION}/firebase-auth.js";
+const WORDS = ${JSON.stringify(PAGE_WORDS)};
+const w = /^th\\b/i.test(navigator.language || "") ? WORDS.th : WORDS.en;
+document.documentElement.lang = w.lang;
+document.getElementById("t").textContent = w.title;
+document.getElementById("u").textContent = w.sub;
+document.getElementById("f").textContent = w.foot;
 const s = document.getElementById("s");
 const b = document.getElementById("b");
+b.textContent = w.button;
+const say = (text, tone) => { s.textContent = text; if (tone) s.dataset.tone = tone; else delete s.dataset.tone; };
 const app = initializeApp(${cfg});
 const auth = getAuth(app);
 ${authEmu ? `connectAuthEmulator(auth, "http://${authEmu}", { disableWarnings: true });` : ''}
@@ -75,25 +182,25 @@ const provider = new GoogleAuthProvider();
 provider.setCustomParameters({ prompt: "select_account" });
 async function signIn() {
   b.disabled = true;
-  s.textContent = "Opening Google sign-in…";
+  say(w.opening);
   try {
     const cred = await signInWithPopup(auth, provider);
     const u = cred.user;
     const idToken = await u.getIdToken();
     const r = await fetch("/callback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ uid: u.uid, idToken, refreshToken: u.refreshToken, displayName: u.displayName ?? null, state: ${JSON.stringify(String(state))} }) });
-    if (r.ok) { s.textContent = "Signed in. You can close this tab and go back to the terminal."; b.hidden = true; return; }
-    s.textContent = "The terminal did not accept the sign-in: " + (await r.text()) + ". Click Sign in to try again.";
+    if (r.ok) { say(w.done, "done"); b.hidden = true; return; }
+    say(w.refused.replace("{why}", await r.text()), "error");
   } catch (e) {
     const code = e.code ?? e.message;
-    s.textContent = code === "auth/popup-blocked"
-      ? "Sign-in failed: auth/popup-blocked. Allow pop-ups for localhost, then click Sign in."
-      : "Sign-in failed: " + code + ". Click Sign in to try again.";
+    say(code === "auth/popup-blocked" ? w.blocked : w.failed.replace("{code}", code), "error");
   }
   b.disabled = false;
 }
 b.addEventListener("click", signIn);
 signIn(); // the automatic attempt; a browser that blocks it leaves the button for the click
-</script></body>`;
+</script>
+</body>
+</html>`;
 }
 
 // §37 W6d: on win32 cmd.exe runs by its full path (ComSpec, else <SystemRoot>\System32\cmd.exe), never a bare `cmd` a working folder

@@ -284,10 +284,11 @@ export function underVolta(prefix, o = {}) {
 
 // ── W20: the words, by platform. The darwin words are 0.13.0's, unchanged. ──
 
+// §38 X2, X12 (0.13.2): the Command Line Tools sentence (darwin git), and "quit and reopen the Claude app (or your terminal)" (win32).
 export const DARWIN_NODE_WORDS = 'Install Node.js 22 or newer: download the macOS installer from https://nodejs.org and open it (or, if you use Homebrew, `brew install node`). Then start a new Claude Code session and run /orbit:orbit-setup again.';
-export const DARWIN_GIT_WORDS = 'Install git: run `xcode-select --install` in Terminal, or type `git` there and macOS offers to install it. Then run /orbit:orbit-setup again.';
-export const WIN_NODE_WORDS = 'Install Node.js 22 or newer: download the Windows Installer (.msi) from https://nodejs.org and run it, keeping its default options (or, in PowerShell, `winget install OpenJS.NodeJS.LTS`). Then close and reopen your terminal, start a new Claude Code session and run /orbit:orbit-setup again.';
-export const WIN_GIT_WORDS = 'Install Git for Windows from https://git-scm.com/downloads/win, keeping its recommended PATH option (or, in PowerShell, `winget install --id Git.Git -e --source winget`). Then close and reopen your terminal, start a new Claude Code session and run /orbit:orbit-setup again.';
+export const DARWIN_GIT_WORDS = 'Install git: run `xcode-select --install` in Terminal, or type `git` there and macOS offers to install it. If a window offers to install the command line developer tools, click Install, then run /orbit:orbit-setup again.';
+export const WIN_NODE_WORDS = 'Install Node.js 22 or newer: download the Windows Installer (.msi) from https://nodejs.org and run it, keeping its default options (or, in PowerShell, `winget install OpenJS.NodeJS.LTS`). Then quit and reopen the Claude app (or your terminal), start a new Claude Code session and run /orbit:orbit-setup again.';
+export const WIN_GIT_WORDS = 'Install Git for Windows from https://git-scm.com/downloads/win, keeping its recommended PATH option (or, in PowerShell, `winget install --id Git.Git -e --source winget`). Then quit and reopen the Claude app (or your terminal), start a new Claude Code session and run /orbit:orbit-setup again.';
 
 export const nodeWords = (o = {}) => (ctx(o).win ? WIN_NODE_WORDS : DARWIN_NODE_WORDS);
 export const gitWords = (o = {}) => (ctx(o).win ? WIN_GIT_WORDS : DARWIN_GIT_WORDS);

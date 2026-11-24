@@ -90,9 +90,12 @@ export const HOOK_UPDATE_BUDGET_MS = 70_000; // under the hook's 90 s timeout (p
 /** This copy's own bin/orbit.js, as a file path (§37 W23: `.pathname` is percent-encoded, so a space broke it, and `/C:/…` on Windows). */
 export const OWN_CLI = fileURLToPath(new URL('../../bin/orbit.js', import.meta.url));
 
-export function runUpdate({ timeoutMs = HOOK_UPDATE_BUDGET_MS } = {}) {
+/** §38 X9, X10: the hook's update argv: `update --to <latestVersion>` from the heartbeat it just made (no --to when that isn't x.y.z). */
+export const updateArgs = (to) => ['update', ...(typeof to === 'string' && /^\d+\.\d+\.\d+$/.test(to) ? ['--to', to] : [])];
+
+export function runUpdate({ timeoutMs = HOOK_UPDATE_BUDGET_MS, to } = {}) {
   // Spawn the CLI's own update command, so the hook and the user run the same code.
-  const r = spawnSync(process.execPath, [OWN_CLI, 'update'], {
+  const r = spawnSync(process.execPath, [OWN_CLI, ...updateArgs(to)], {
     encoding: 'utf8',
     env: process.env,
     timeout: timeoutMs,
@@ -104,7 +107,7 @@ export function runUpdate({ timeoutMs = HOOK_UPDATE_BUDGET_MS } = {}) {
 export function formatBlock(s, { hook = false } = {}) {
   const lines = [];
   if (!s.seat) { // §35.3: the fix is setup, in Claude Code (the hook) or in a terminal
-    lines.push(`Orbit: this device has no seat yet (Uplink ${s.uplinkVersion}). Fix: ${hook ? 'run /orbit:orbit-setup' : 'run `orbit setup` (or /orbit:orbit-setup in Claude Code)'}.`);
+    lines.push(`Orbit: this device has no seat yet (Uplink ${s.uplinkVersion}). Fix: ${hook ? "run /orbit:orbit-setup in Claude Code (the desktop app's Code tab, or a terminal)" : 'run `orbit setup` (or /orbit:orbit-setup in Claude Code)'}.`); // §38 X12: the hook form
     return lines.join('\n');
   }
   const { seatId, stationId, kind, role, accountLabel } = s.seat;
@@ -158,7 +161,7 @@ export async function run(argv) {
   // the block goes out first and synchronously, so a slow update (killed at the hook timeout) never hides it
   writeSync(1, formatBlock(s, { hook }) + '\n');
   if (willUpdate) {
-    const r = runUpdate();
+    const r = runUpdate({ to: s.update.latestVersion }); // X10: through X9, at the version the heartbeat named
     if (r.ok) writeSync(1, `updated to v${s.update.latestVersion}: ${s.update.notes || '(no notes)'} (restart the session to load it)\n`);
     else {
       const why = r.timedOut ? `timed out after ${Math.round(HOOK_UPDATE_BUDGET_MS / 1000)} s` : splitLines((r.out || `exit ${r.status}`).trim()).pop();
