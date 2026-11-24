@@ -11,6 +11,7 @@ import { git, ORBIT_GIT_IDENTITY, isClean, currentBranch } from './git.js';
 import { orbitHome, ensureHome } from './store.js';
 import { OrbitError } from './errors.js';
 import { verifyBundle, verifyBundleHeads, SHA_RE } from './bundle.js';
+import { gitBin, tarBin, splitLines } from './platform.js';
 
 export const LIMITS = { blobBytes: 95 * 1024 * 1024, packBytes: 500 * 1024 * 1024 };
 export const NAME_RE = /^[a-z0-9-]+$/;
@@ -40,7 +41,7 @@ export function prePushCheck(repoPath, rev = 'HEAD') {
   const objects = git(repoPath, ['rev-list', '--objects', rev]);
   const info = git(repoPath, ['cat-file', '--batch-check=%(objecttype) %(objectsize) %(objectname) %(rest)'], { input: objects + '\n' });
   let largest = { bytes: 0, path: null };
-  for (const line of info.split('\n')) {
+  for (const line of splitLines(info)) {
     const [type, size, , ...rest] = line.split(' ');
     if (type !== 'blob') continue;
     const bytes = Number(size);
@@ -50,7 +51,7 @@ export function prePushCheck(repoPath, rev = 'HEAD') {
   const attrFiles = (git(repoPath, ['ls-files', '-z', '--', '.gitattributes', '**/.gitattributes', '*/.gitattributes'], { allowFail: true }) ?? '').split('\0').filter(Boolean);
   const lfs = attrFiles.some((f) => { try { return /filter=lfs/.test(readFileSync(join(repoPath, f), 'utf8')); } catch { return false; } });
   if (lfs) reasons.push('Git LFS in use (.gitattributes has filter=lfs)');
-  const counts = Object.fromEntries((git(repoPath, ['count-objects', '-v']) ?? '').split('\n').map((l) => l.split(': ')).filter((p) => p.length === 2));
+  const counts = Object.fromEntries(splitLines(git(repoPath, ['count-objects', '-v']) ?? '').map((l) => l.split(': ')).filter((p) => p.length === 2));
   const packBytes = Number(counts['size-pack'] ?? 0) * 1024;
   if (packBytes > LIMITS.packBytes) reasons.push(`pack over 500 MB (${(packBytes / 1048576).toFixed(0)} MB)`);
   const shallow = git(repoPath, ['rev-parse', '--is-shallow-repository'], { allowFail: true }) === 'true';
@@ -183,7 +184,7 @@ export function pullFullFromBundle({ repoPath, bundle, taskId, workBranch }) {
 /** §14.7: without links.base, the cut point is the first first-parent ancestor of work whose message lacks the `Orbit-Task: <taskId>` trailer. */
 export function cutPointOf(repoPath, workSha, taskId) {
   const re = new RegExp(`^Orbit-Task:\\s*${taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm');
-  for (const sha of git(repoPath, ['rev-list', '--first-parent', workSha]).split('\n').filter(Boolean)) {
+  for (const sha of splitLines(git(repoPath, ['rev-list', '--first-parent', workSha])).filter(Boolean)) {
     if (!re.test(git(repoPath, ['log', '-1', '--format=%B', sha]))) return sha;
   }
   throw new OrbitError(`cannot tell where ${taskId}'s work branch was cut: the final report has no links.base and every commit carries the task trailer`, { code: 'no_base' });
@@ -205,7 +206,7 @@ export function pullSnapshotFromBundle({ repoPath, bundle, taskId, workBranch, b
   const patchDir = tmpDir(`patches-${taskId}`);
   try {
     const list = git(repoPath, ['format-patch', '-q', '-o', patchDir, `${baseSha}..${workSha}`]);
-    const patches = list ? list.split('\n').filter(Boolean) : readdirSync(patchDir).map((f) => join(patchDir, f)).sort();
+    const patches = list ? splitLines(list).filter(Boolean) : readdirSync(patchDir).map((f) => join(patchDir, f)).sort();
     if (!patches.length) throw new OrbitError(`no commits on ${workBranch} beyond its base`, { code: 'nothing_to_pull' });
     const from = git(repoPath, ['rev-parse', 'HEAD']);
     git(repoPath, ['switch', '-q', '-c', local]);
@@ -230,11 +231,13 @@ export function pullSubjectFromBundle({ bundle, taskId, outDir }) {
     git(dir, ['init', '-q']);
     verifyBundle(bundle, WORK_REF, { repo: dir });
     fetchWork(dir, bundle);
-    const files = (git(dir, ['ls-tree', '-r', '--name-only', 'FETCH_HEAD', `tasks/${taskId}/`], { allowFail: true }) ?? '').split('\n').filter(Boolean);
+    const files = splitLines(git(dir, ['ls-tree', '-r', '--name-only', 'FETCH_HEAD', `tasks/${taskId}/`], { allowFail: true }) ?? '').filter(Boolean);
     if (!files.length) throw new OrbitError(`the work branch has no files under tasks/${taskId}/`, { code: 'nothing_to_pull' });
     mkdirSync(outDir, { recursive: true });
-    const tar = execFileSync('git', ['archive', '--format=tar', 'FETCH_HEAD', `tasks/${taskId}`], { cwd: dir, maxBuffer: 1024 * 1024 * 1024 });
-    execFileSync('tar', ['-x', '-C', outDir], { input: tar });
+    // §37 W6d, W26: git and tar by their absolute paths; the archive comes on stdin, named as `-f -` (Windows' bsdtar reads a tape
+    // device without it)
+    const tar = execFileSync(gitBin(), ['archive', '--format=tar', 'FETCH_HEAD', `tasks/${taskId}`], { cwd: dir, maxBuffer: 1024 * 1024 * 1024 });
+    execFileSync(tarBin(), ['-x', '-f', '-', '-C', outDir], { input: tar });
     return { outDir: join(outDir, 'tasks', taskId), files };
   } finally {
     rmSync(dir, { recursive: true, force: true });

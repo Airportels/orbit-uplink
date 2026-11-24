@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 // orbit: the Uplink CLI (CONTRACT v0.5.2 §8, §14, §15, §16, §18; §20 (v0.8.0); §24 (v0.10.0); §32.1 lines 9 and 12 (v0.12.0); §33.4, §34.3,
 // §35.2 and §36.4 (v0.13.0): generated slot ids, sign-in from any invited account, orbit setup, --version --check-deps). Node 22, ESM.
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { UPLINK_VERSION, CONTRACT_VERSION, CLI_ROOT } from '../src/version.js';
+import { isWindows } from '../src/platform.js';
+
+// §37 W20: on win32 the help names the real folder (%USERPROFILE%\.orbit), never ~/
+const HOME_WORDS = isWindows() ? join(homedir(), '.orbit') : '~/.orbit';
 
 const COMMANDS = {
   setup: () => import('../src/commands/setup.js'),
@@ -29,7 +35,7 @@ const HELP = `orbit ${UPLINK_VERSION} (contract ${CONTRACT_VERSION}): Orbit Upli
                                                        set this device up in one go: checks Node 22+, git and npm, installs this CLI (a copy),
                                                        the config, the Google sign-in, the ground seat and its status; safe to run again
                                                        (it repairs what is broken). In Claude Code: /orbit:orbit-setup
-  orbit login                                          person Google sign-in (browser); stores ~/.orbit/person.json (Orbit is invite only:
+  orbit login                                          person Google sign-in (browser); stores ${join(HOME_WORDS, 'person.json')} (Orbit is invite only:
                                                        an admin invites your Google account first)
   orbit seat add --ground [--account <label>]          enrol this device's ground seat
   orbit seat add --cloud --account <label>             print the preset first prompt for a new cloud seat (non-slot orbiters)
@@ -62,7 +68,7 @@ const HELP = `orbit ${UPLINK_VERSION} (contract ${CONTRACT_VERSION}): Orbit Upli
   orbit heartbeat [--state s] [--doorbell <pr>]        seat heartbeat; orbiters register their doorbell with it
   orbit --version [--check-deps]                       the version; --check-deps exits 1 when the CLI can't load its dependencies
 
-Files: $ORBIT_HOME (default ~/.orbit): config.json, person.json, seat.json (all 0600); tmp/ for bundles in flight. Env: ORBIT_MC_URL.
+Files: $ORBIT_HOME (default ${HOME_WORDS}): config.json, person.json, seat.json (all 0600); tmp/ for bundles in flight. Env: ORBIT_MC_URL.
 A slot key is shown once on the terminal (never stdout unless --key-to-stdout, never in --json, never on disk); paste it into the
 cloud environment's network secret for the Mission Control host (§15.6).
 The device never touches the factory: code travels as git bundles through Mission Control (no gh, no GitHub credential).

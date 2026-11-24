@@ -11,6 +11,7 @@
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
 import { git, currentBranch } from './git.js';
+import { splitLines } from './platform.js';
 import { OrbitError } from './errors.js';
 
 export const FETCH_TIMEOUT_MS = 120_000;
@@ -91,7 +92,7 @@ function lineSource(repoPath, { remotes, current, lineArg }) {
  * fetches nothing; "full" fetches only the line's branch. Throws OrbitError (exit 2) when the line cannot be told or has no tip.
  */
 export function resolveSendRefs({ repoPath, line: lineArg = null, mode = 'full' }) {
-  const remotes = (git(repoPath, ['remote']) ?? '').split('\n').filter(Boolean);
+  const remotes = splitLines(git(repoPath, ['remote']) ?? '').filter(Boolean);
   const current = currentBranch(repoPath);
   const head = git(repoPath, ['rev-parse', '--verify', '-q', 'HEAD^{commit}'], { allowFail: true });
   if (!head) throw new OrbitError('the repo has no commit yet: commit first, then send', { code: 'no_commit', exitCode: 2 });

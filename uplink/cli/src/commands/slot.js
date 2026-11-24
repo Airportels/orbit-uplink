@@ -19,6 +19,10 @@ import { personClient, mcBaseUrl } from '../mc.js';
 import { OrbitError, McError } from '../errors.js';
 import { firstPrompt } from '../first-prompt.js';
 import { stationFor } from './seat.js';
+import { isWindows } from '../platform.js';
+
+/** §37 W26: Windows has no /dev/tty, so a key is never shown there on a terminal: exit 2 no_terminal, and say what to do instead. */
+export const WIN_NO_TERMINAL = 'no terminal: on Windows the key can\'t be shown on a terminal (there is no /dev/tty). Mint and rotate slots from a Mac, or pass --key-to-stdout';
 
 // §15.1 from 0.13.0 (§33.4, R8): a slot's id is generated, obt- plus 3 or more digits (obt-001); an old <word>-<n> id (orbit-1) stays
 // valid as an id that already exists. Never a {handle}-{kind}-{n} seat id.
@@ -60,8 +64,9 @@ export function checkSlotName(name) {
 }
 
 /** §15.6: where the key will go, decided before the call. --key-to-stdout → stdout; else /dev/tty; else exit 2 (nothing is called). */
-export function openKeySink({ keyToStdout = false } = {}) {
+export function openKeySink({ keyToStdout = false } = {}, o = {}) {
   if (keyToStdout) return { where: 'stdout', write: (s) => process.stdout.write(s), close: () => {} };
+  if (isWindows(o)) throw new OrbitError(WIN_NO_TERMINAL, { exitCode: 2, code: 'no_terminal' });
   let fd;
   try {
     fd = openSync('/dev/tty', 'w');

@@ -8,11 +8,12 @@
 // the install gets what is left (at least 25 s) minus 5 s kept for `orbit --version`, and a step with no time left is skipped and
 // says so.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { readConfig } from '../store.js';
 import { UPLINK_VERSION, CLI_ROOT } from '../version.js';
+import { ctx as platformCtx, runNpm, runClaude, runOrbit, layout, splitLines } from '../platform.js';
 
 export const UPDATE_BUDGET_MS = Number(process.env.ORBIT_UPDATE_BUDGET_MS || 60_000);
 export const PLUGIN_STEP_MS = 15_000;
@@ -65,9 +66,13 @@ export function runsFromOwnFolder(cliRoot = CLI_ROOT) {
  * [--prefix <prefix>] <the .tgz>`, so its dependencies land under that prefix (Node's global folder, or with `prefix` the person's
  * own folder) and a later `orbit watch` can load firebase. Never `sudo`, never `npm config set`. Both steps share `timeoutMs`.
  * ORBIT_SETUP_NPM_CMD replaces the pair (tests: a stub that records its call; it is run by the shell with ORBIT_SETUP_CLI_DIR set to
- * `dir`, and ORBIT_SETUP_PREFIX to `prefix` when one is given). → { ok, out, status, timedOut }.
+ * `dir`, and ORBIT_SETUP_PREFIX to `prefix` when one is given; W6e: it keeps `shell: true`, and no win32 run uses it).
+ * → { ok, out, status, timedOut }. npm runs through platform.js runNpm (W6a: on win32 node + npm-cli.js, no shell); `o` is
+ * platform.js's context (a test's fake platform, runner and fs) plus `readdir`.
  */
-export function installCli(dir, timeoutMs, { prefix } = {}) {
+export function installCli(dir, timeoutMs, { prefix } = {}, o = {}) {
+  const c = platformCtx(o);
+  const readdir = o.readdir ?? readdirSync;
   const deadline = Date.now() + timeoutMs;
   const left = () => deadline - Date.now();
   if (process.env.ORBIT_SETUP_NPM_CMD) {
@@ -77,16 +82,25 @@ export function installCli(dir, timeoutMs, { prefix } = {}) {
     const timedOut = r.error?.code === 'ETIMEDOUT';
     return { ok: r.status === 0 && !timedOut, out: timedOut ? `timed out after ${Math.round(timeoutMs / 1000)} s` : ((r.stdout ?? '') + (r.stderr ?? '')).trim(), status: r.status, timedOut };
   }
-  const tmp = mkdtempSync(join(tmpdir(), 'orbit-pack-'));
+  const tmp = c.mkdtemp(c.path.join(tmpdir(), 'orbit-pack-'));
   try {
-    const pack = sh('npm', ['pack', dir, '--ignore-scripts', '--pack-destination', tmp, '--silent'], left());
-    const tgz = readdirSync(tmp).find((f) => f.endsWith('.tgz'));
-    if (!pack.ok || !tgz) return { ok: false, out: `npm pack failed: ${pack.out.split('\n').pop() || 'no .tgz'}`, status: pack.status, timedOut: /timed out/.test(pack.out) };
-    const inst = sh('npm', ['install', '-g', '--no-audit', '--no-fund', ...(prefix ? ['--prefix', prefix] : []), join(tmp, tgz)], left());
+    const pack = npm(['pack', dir, '--ignore-scripts', '--pack-destination', tmp, '--silent'], left(), c);
+    const tgz = readdir(tmp).find((f) => f.endsWith('.tgz'));
+    if (!pack.ok || !tgz) return { ok: false, out: `npm pack failed: ${splitLines(pack.out).pop() || 'no .tgz'}`, status: pack.status, timedOut: /timed out/.test(pack.out) };
+    const inst = npm(['install', '-g', '--no-audit', '--no-fund', ...(prefix ? ['--prefix', prefix] : []), c.path.join(tmp, tgz)], left(), c);
     return { ok: inst.ok, out: inst.out, status: inst.status, timedOut: /timed out/.test(inst.out) };
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    c.rm(tmp, { recursive: true, force: true });
   }
+}
+
+/** W6a: npm with `args` and a timeout, through runNpm. → { ok, out, status, error }. */
+function npm(args, timeoutMs, c) {
+  if (timeoutMs < 1000) return { ok: false, skipped: true, out: 'skipped: no time left in the update budget', status: null, error: { code: 'skipped' } };
+  const r = runNpm(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs }, c);
+  const timedOut = r.error?.code === 'ETIMEDOUT';
+  const out = r.error?.code === 'no_npm' ? 'npm not found' : timedOut ? `timed out after ${Math.round(timeoutMs / 1000)} s` : ((r.stdout ?? '') + (r.stderr ?? '')).trim();
+  return { ok: r.status === 0 && !timedOut, out, status: r.status, error: r.error };
 }
 
 function sh(cmd, args, timeoutMs) {
@@ -96,7 +110,26 @@ function sh(cmd, args, timeoutMs) {
   return { ok: r.status === 0 && !timedOut, out: timedOut ? `timed out after ${Math.round(timeoutMs / 1000)} s` : ((r.stdout ?? '') + (r.stderr ?? '')).trim(), status: r.status, error: r.error };
 }
 
-export async function run() {
+/** W6c: claude with `args` and a timeout, through runClaude (win32: the .exe by its path, a .cmd through cmd.exe). → as sh(). */
+function claude(args, timeoutMs, c) {
+  if (timeoutMs < 1000) return { ok: false, skipped: true, out: 'skipped: no time left in the update budget', status: null, error: { code: 'skipped' } };
+  const r = runClaude(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: timeoutMs }, c);
+  const timedOut = r.error?.code === 'ETIMEDOUT';
+  const out = r.error?.message && !timedOut ? r.error.message : timedOut ? `timed out after ${Math.round(timeoutMs / 1000)} s` : ((r.stdout ?? '') + (r.stderr ?? '')).trim();
+  // "claude not found on PATH" (W6c) is the step's words, not a code
+  return { ok: r.status === 0 && !timedOut, out, status: r.status, error: r.error?.code === 'no_claude' || r.error?.code === 'bad_arg' ? undefined : r.error };
+}
+
+/** A step's failure, as the last line of its output (W7), or its error code. */
+const why = (r) => r.error?.code ?? splitLines(r.out).pop();
+
+/**
+ * `orbit update`. POSIX as 0.13.0. §37 W24, on win32: claude through runClaude (W6c; the marketplace name from config.json); npm
+ * through runNpm (W6a, installCli); W10's folder, npm's global prefix (never --prefix, no own folder), asked once with `npm prefix
+ * -g` before the install step, from the same budget; the version step runs that folder's orbit.js with Node (W6b), and says so when
+ * the prefix couldn't be told. `o` is platform.js's context (a test's platform, runner and fs).
+ */
+export async function run(argv = [], o = {}) {
   if (process.env.ORBIT_UPDATE_CMD) {
     const r = spawnSync(process.env.ORBIT_UPDATE_CMD, { shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: UPDATE_BUDGET_MS });
     process.stdout.write(r.stdout ?? '');
@@ -109,23 +142,48 @@ export async function run() {
   const steps = [];
   const deadline = Date.now() + UPDATE_BUDGET_MS;
   const left = () => deadline - Date.now();
-  const mu = sh('claude', ['plugin', 'marketplace', 'update', mp], stepTimeout('plugin', left()));
-  steps.push(`marketplace ${mp}: ${mu.ok ? 'updated' : `failed (${mu.error?.code ?? mu.out.split('\n').pop()})`}`);
-  const pu = sh('claude', ['plugin', 'update', plugin], stepTimeout('plugin', left()));
-  steps.push(`plugin ${plugin}: ${pu.ok ? 'updated (restart the session to load it)' : `failed (${pu.error?.code ?? pu.out.split('\n').pop()})`}`);
+  const c = platformCtx(o);
+  const mu = c.win ? claude(['plugin', 'marketplace', 'update', mp], stepTimeout('plugin', left()), c) : sh('claude', ['plugin', 'marketplace', 'update', mp], stepTimeout('plugin', left()));
+  steps.push(`marketplace ${mp}: ${mu.ok ? 'updated' : `failed (${why(mu)})`}`);
+  const pu = c.win ? claude(['plugin', 'update', plugin], stepTimeout('plugin', left()), c) : sh('claude', ['plugin', 'update', plugin], stepTimeout('plugin', left()));
+  steps.push(`plugin ${plugin}: ${pu.ok ? 'updated (restart the session to load it)' : `failed (${why(pu)})`}`);
   const cliDir = cloneDirs(mp).map((d) => join(d, 'uplink', 'cli')).find((p) => existsSync(join(p, 'package.json')));
-  // V69: where the running orbit lives: the person's own folder when it runs from there, else Node's global folder (no --prefix)
-  const prefix = runsFromOwnFolder() ? ownPrefix() : undefined;
+  // V69: where the running orbit lives: the person's own folder when it runs from there, else Node's global folder (no --prefix).
+  // W10, W24: on win32 always npm's global folder, never --prefix; `npm prefix -g` says where it is, once, before the install.
+  const prefix = !c.win && runsFromOwnFolder() ? ownPrefix() : undefined;
+  let globalPrefix = null;
+  let prefixFailed = null;
+  if (c.win) {
+    const t = stepTimeout('plugin', left()); // at most 15 s, from the same budget
+    const pre = t < 1000 ? { status: null, error: { code: 'skipped' } } : runNpm(['prefix', '-g'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: t }, c);
+    globalPrefix = pre.status === 0 ? splitLines((pre.stdout ?? '').trim()).filter(Boolean).pop() ?? null : null;
+    if (!globalPrefix) {
+      const code = pre.error?.code;
+      prefixFailed = code === 'no_npm' ? 'npm not found' : code === 'ETIMEDOUT' ? `timed out after ${Math.round(t / 1000)} s` : code === 'skipped' ? 'skipped: no time left in the update budget'
+        : splitLines((pre.stderr ?? '').trim()).filter(Boolean).pop() || `exit ${pre.status ?? code}`;
+    }
+  }
   if (cliDir) {
     const budget = stepTimeout('npm', left());
-    const ni = budget < 1000 ? { ok: false, out: 'skipped: no time left in the update budget' } : installCli(cliDir, budget, { prefix }); // a copy, from 0.13.0 (§35.2)
-    steps.push(`cli from ${cliDir}: ${ni.ok ? `installed (a copy)${prefix ? ` in ${prefix}` : ''}` : `failed (${ni.out.split('\n').pop()})`}`);
+    const ni = budget < 1000 ? { ok: false, out: 'skipped: no time left in the update budget' } : installCli(cliDir, budget, { prefix }, o); // a copy, from 0.13.0 (§35.2)
+    const where = prefix ?? globalPrefix;
+    steps.push(`cli from ${cliDir}: ${ni.ok ? `installed (a copy)${where ? ` in ${where}` : ''}` : `failed (${splitLines(ni.out).pop()})`}`);
   } else {
     steps.push(`cli: marketplace checkout not found under ${cloneDirs(mp)[0]}; reinstall with: orbit setup (or /orbit:orbit-setup in Claude Code)`);
   }
-  // the person's own folder may not be on this process's PATH (the hook finds it by its full path): ask that copy by its full path
-  const vr = sh(prefix ? join(prefix, 'bin', 'orbit') : 'orbit', ['--version'], stepTimeout('version', left()));
-  steps.push(`orbit --version now: ${vr.ok ? vr.out : `(was ${UPLINK_VERSION})`}`);
+  if (c.win) { // W6b: that folder's orbit.js, with Node, never through its shim
+    if (!globalPrefix) steps.push(`orbit --version now: unknown, npm prefix -g failed (${prefixFailed}) (was ${UPLINK_VERSION})`);
+    else {
+      const vt = stepTimeout('version', left());
+      const vr = vt < 1000 ? { status: null } : runOrbit(layout(globalPrefix, c).orbitJs, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: vt }, c);
+      const v = vr.status === 0 ? splitLines((vr.stdout ?? '').trim())[0] : '';
+      steps.push(`orbit --version now: ${v || `(was ${UPLINK_VERSION})`}`);
+    }
+  } else {
+    // the person's own folder may not be on this process's PATH (the hook finds it by its full path): ask that copy by its full path
+    const vr = sh(prefix ? join(prefix, 'bin', 'orbit') : 'orbit', ['--version'], stepTimeout('version', left()));
+    steps.push(`orbit --version now: ${vr.ok ? vr.out : `(was ${UPLINK_VERSION})`}`);
+  }
   console.log(steps.join('\n'));
   return mu.ok && pu.ok ? 0 : 1;
 }

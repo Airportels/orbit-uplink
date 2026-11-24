@@ -19,7 +19,7 @@ export async function run(argv) {
   const kind = args.ground ? 'ground' : args.kind && args.kind !== true ? String(args.kind) : 'orbiter';
   const accountLabel = String(args.account || process.env.ORBIT_ACCOUNT_LABEL || (kind === 'orbiter' ? 'cloud' : 'ground'));
   const { seat, path, doorbell, warning } = await enrolWithToken({ token, kind, accountLabel });
-  console.log(`enrolled ${kind} seat ${seat.seatId} in station ${seat.stationId ?? 'unknown'} (key stored in ${path}, mode ${fileMode(path)}, never shown)`);
+  console.log(`enrolled ${kind} seat ${seat.seatId} in station ${seat.stationId ?? 'unknown'} (key stored in ${path}${fileMode(path) ? `, mode ${fileMode(path)}` : ''}, never shown)`); // §37 W21: no mode on win32
   if (warning) console.error(`warning: ${warning}`);
   if (doorbell) console.log(`doorbell already registered: ${doorbell.repo}#${doorbell.pr} (a re-enrolment; the key was rotated)`);
   else if (kind === 'orbiter') console.log('no doorbell yet: open your draft PR in Airportels/orbit-beacon and register it through heartbeat (first prompt, §10)');

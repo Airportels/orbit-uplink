@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { git } from './git.js';
+import { splitLines } from './platform.js';
 import { OrbitError } from './errors.js';
 import { readConfig } from './store.js';
 
@@ -19,7 +20,7 @@ export const TRANSFER_TIMEOUT_MS = 10 * 60_000; // one PUT or GET of up to 512 M
 /** `git bundle list-heads` (runs anywhere): [{ sha, ref }]. */
 export function bundleHeads(file) {
   const out = git(dirname(file), ['bundle', 'list-heads', file]);
-  return out.split('\n').filter(Boolean).map((l) => { const sp = l.indexOf(' '); return { sha: l.slice(0, sp), ref: l.slice(sp + 1) }; });
+  return splitLines(out).filter(Boolean).map((l) => { const sp = l.indexOf(' '); return { sha: l.slice(0, sp), ref: l.slice(sp + 1) }; });
 }
 
 /**

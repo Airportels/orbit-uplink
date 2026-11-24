@@ -78,7 +78,7 @@ export async function run(argv) {
   if (!sub) {
     const s = readSeat();
     if (!s) { console.log('no seat on this device (run: orbit seat add --ground)'); return 1; }
-    console.log(`seat ${s.seatId} (${s.kind}, ${s.role}) · station ${s.stationId} · account ${s.accountLabel ?? '-'} · ${paths.seat()} (mode ${fileMode(paths.seat())})`);
+    console.log(`seat ${s.seatId} (${s.kind}, ${s.role}) · station ${s.stationId} · account ${s.accountLabel ?? '-'} · ${paths.seat()}${fileMode(paths.seat()) ? ` (mode ${fileMode(paths.seat())})` : ''}`); // §37 W21: no "(mode …)" on win32
     return 0;
   }
   if (sub !== 'add') throw new OrbitError(`unknown subcommand "seat ${sub}"`, { exitCode: 2, hint: 'orbit seat add --ground | --cloud --account <label>' });
@@ -98,7 +98,7 @@ export async function run(argv) {
     const t = await mc.call('createEnrolToken', { stationId, kind: 'ground' });
     if (!t?.token) throw new OrbitError('createEnrolToken returned no token', { code: 'bad_token' });
     const { seat, path, warning } = await enrolWithToken({ token: t.token, kind: 'ground', accountLabel, handle: person.handle, stationId });
-    console.log(`enrolled ground seat ${seat.seatId} in station ${seat.stationId} (key stored in ${path}, mode ${fileMode(path)}, never shown)`);
+    console.log(`enrolled ground seat ${seat.seatId} in station ${seat.stationId} (key stored in ${path}${fileMode(path) ? `, mode ${fileMode(path)}` : ''}, never shown)`); // §37 W21
     if (warning) console.error(`warning: ${warning}`);
     return 0;
   }

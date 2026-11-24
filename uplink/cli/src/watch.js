@@ -28,6 +28,11 @@ export function firebaseConfig(config = readConfig()) {
   return { fb, authEmu, dbEmu };
 }
 
+/** The signals that stop a watch, with their exit codes (128 + the signal number). §37 W25: win32 adds SIGHUP and SIGBREAK. */
+export function stopSignals(platform = process.platform) {
+  return [['SIGINT', 130], ['SIGTERM', 143], ...(platform === 'win32' ? [['SIGHUP', 129], ['SIGBREAK', 149]] : [])];
+}
+
 export function ringTime(v) {
   if (v == null) return NaN;
   if (typeof v === 'number') return v;
@@ -84,8 +89,10 @@ export async function watchForRing({ seat, config = readConfig(), sinceMs, timeo
       });
     };
     const timer = timeoutMs > 0 ? setTimeout(() => finish(reject, new OrbitError(`no ring within ${Math.round(timeoutMs / 1000)} s`, { code: 'timeout', exitCode: 4 })), timeoutMs) : null;
-    // a stopped background command: leave presence idle, then exit 130/143 so the session sees it was interrupted
-    for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+    // a stopped background command: leave presence idle, then exit 130/143 so the session sees it was interrupted. §37 W25: on win32
+    // also SIGHUP (129: the console window closed) and SIGBREAK (149: Ctrl+Break), 128 plus the signal number. When Claude Code stops
+    // a watch on Windows it is killed outright: no idle write (presence goes offline through onDisconnect), no exit 143.
+    for (const [sig, code] of stopSignals()) {
       process.once(sig, () => finish(reject, new OrbitError(`watch stopped (${sig})`, { code: 'stopped', exitCode: code })));
     }
     const q = dbm.query(dbm.ref(db, `rings/${seat.seatId}`), dbm.limitToLast(20));

@@ -13,12 +13,15 @@
 // $ORBIT_HOME/npm (by default ~/.orbit/npm), and one PATH line goes in the shell's startup file (~/.zshenv; for bash, ~/.bashrc and
 // the login file bash reads), named in the step's note. Never `sudo`, never `npm config set`. In Node's global folder, another
 // `orbit` that PATH finds first fails `shadowed`, and the next run doesn't install again (M31 call 17).
+// §37 (v0.13.1, Windows devices): everything that differs by platform comes from ../platform.js. On win32 (W9–W13) the CLI goes in
+// npm's global folder only (no own folder, no PATH line, never a PATH change: W13's words say how), npm runs as node + npm-cli.js,
+// an installed orbit as node + its orbit.js, writability is a real create and remove, and the words are Windows' (W20). POSIX is
+// unchanged (W3).
 // Tests only (left out of the help): --emulator-user <local-part | address> signs in with the Auth emulator, and ORBIT_SETUP_NPM_CMD
 // replaces the npm pack and npm install pair (update.js installCli): no test ever runs the real global install.
-import { spawnSync } from 'node:child_process';
 import { accessSync, appendFileSync, chmodSync, constants, copyFileSync, existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { basename, delimiter, dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { ensureHome, orbitHome, paths, readConfig, readPerson, readPersonRaw, readSeat, restorePersonRaw, writePerson } from '../store.js';
 import { getIdToken, UNREACHABLE_WORDS } from '../auth.js';
 import { personClient, mcCall } from '../mc.js';
@@ -28,6 +31,7 @@ import { installCli, cloneDirs, ownPrefix, insideDir } from './update.js';
 import { signInAndRegister, refusalWords } from './login.js';
 import { enrolWithToken } from './seat.js';
 import { collectStatus, formatBlock } from './status.js';
+import * as platform from '../platform.js';
 
 export const STEPS = Object.freeze(['check', 'cli', 'config', 'signin', 'seat', 'status']);
 const USAGE = 'orbit setup [--station <s>] [--account <label>] [--config <file>] [--json]';
@@ -49,14 +53,9 @@ class StepFailed extends Error {
 }
 const fail = (code, fix) => { throw new StepFailed(code, fix); };
 
-/** An executable named `cmd` on PATH (no shell), or null. */
-export function which(cmd, pathVar = process.env.PATH ?? '') {
-  for (const dir of pathVar.split(delimiter)) {
-    if (!dir) continue;
-    const p = join(dir, cmd);
-    try { if (statSync(p).isFile()) { accessSync(p, constants.X_OK); return p; } } catch { /* not here */ }
-  }
-  return null;
+/** An executable named `cmd` on PATH (no shell), or null: platform.js which (W4). `pathVar` replaces PATH (POSIX callers). */
+export function which(cmd, pathVar) {
+  return platform.which(cmd, pathVar === undefined ? {} : { env: { ...process.env, PATH: pathVar } });
 }
 
 /** The first missing field of 35.2 step 3's config (a dotted name), or null when it has them all. */
@@ -86,10 +85,15 @@ export function writableDir(prefix) {
   }
 }
 
-/** `orbit --version --check-deps` of the orbit at `bin`: { version, ok, out }. */
-function probe(bin) {
-  const r = spawnSync(bin, ['--version', '--check-deps'], { encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
-  const version = (r.stdout ?? '').trim().split('\n')[0] ?? '';
+/**
+ * `orbit --version --check-deps` of an installed orbit: { version, ok, out }. POSIX: the shim `bin` (as 0.13.0); win32: node +
+ * the install's orbit.js (W6b), never its .cmd shim.
+ */
+function probe(bin, o = {}) {
+  const c = platform.ctx(o);
+  const opts = { encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] };
+  const r = c.win ? platform.runOrbit(bin, ['--version', '--check-deps'], opts, c) : c.run(bin, ['--version', '--check-deps'], opts);
+  const version = platform.splitLines((r.stdout ?? '').trim())[0] ?? '';
   const out = `${(r.stdout ?? '').trim()} ${(r.stderr ?? '').trim()}`.trim().replace(/\s+/g, ' ').slice(0, 300);
   return { version, ok: r.status === 0 && /^\d+\.\d+\.\d+/.test(version), out: out || `exit ${r.status ?? r.error?.code}` };
 }
@@ -97,19 +101,24 @@ function probe(bin) {
 // ── the six steps: each → { result: 'done' | 'already', note }, or throws StepFailed ──
 
 /** §35.2 step 1's words (V67, §35.8), exactly: the nodejs.org installer first (no Terminal needed), Homebrew second. */
-export const NODE_WORDS = 'Install Node.js 22 or newer: download the macOS installer from https://nodejs.org and open it (or, if you use Homebrew, `brew install node`). Then start a new Claude Code session and run /orbit:orbit-setup again.';
-export const GIT_WORDS = 'Install git: run `xcode-select --install` in Terminal, or type `git` there and macOS offers to install it. Then run /orbit:orbit-setup again.';
+export const NODE_WORDS = platform.DARWIN_NODE_WORDS;
+export const GIT_WORDS = platform.DARWIN_GIT_WORDS;
 
-function check() {
-  const node = process.versions.node;
-  if (Number(node.split('.')[0]) < 22) fail('node_too_old', NODE_WORDS); // Node, or npm which comes with it: the same words
-  if (!which('git')) fail('no_git', GIT_WORDS);
-  if (!which('npm')) fail('no_npm', NODE_WORDS);
-  const claude = which('claude');
+/**
+ * Step 1: Node 22+, git and npm (W4: on win32 by PATHEXT; a .cmd git is no_git; npm is node's own npm-cli.js, W6a), and whether
+ * claude is there. The words are the platform's (W20). `o` is platform.js's context.
+ */
+export function check(args = {}, _ctx = {}, o = {}) {
+  const c = platform.ctx(o);
+  const node = o.nodeVersion ?? process.versions.node;
+  if (Number(node.split('.')[0]) < 22) fail('node_too_old', platform.nodeWords(c)); // Node, or npm which comes with it: the same words
+  if (!platform.toolPath('git', o)) fail('no_git', platform.gitWords(c));
+  if (c.win ? !platform.npmCliJs(c) : !platform.which('npm', c)) fail('no_npm', platform.nodeWords(c));
+  const claude = platform.findClaude(c);
   return { result: 'done', note: `Node ${node}, git and npm${claude ? ', and claude' : '; claude is not on PATH (orbit update needs it later)'}` };
 }
 
-/** Is `p` the same file as `q` (by their real paths)? */
+/** Is `p` the same file as `q` (by their real paths)? (POSIX; win32 compares installs with platform.sameInstall, W5.) */
 function sameFile(p, q) {
   try { return realpathSync(p) === realpathSync(q); } catch { return false; }
 }
@@ -195,16 +204,15 @@ function globalOnPath(bin, prefix) {
  * gets the PATH line (ensurePathLine). Node's global folder must be what PATH finds (globalOnPath): a copy there that PATH doesn't
  * find, or finds behind another orbit, fails not_on_path or `shadowed` on every run until that's fixed, and is never installed again.
  */
-function cli() {
+export function cli(args = {}, _ctx = {}, o = {}) {
+  if (platform.isWindows(o)) return cliWin(o);
   const own = ownPrefix();
   const ownBin = join(own, 'bin', 'orbit');
   const found = which('orbit');
   let prefix; // `npm prefix -g`, asked once, when needed
   const globalPrefix = () => {
     if (prefix !== undefined) return prefix;
-    const pre = spawnSync('npm', ['prefix', '-g'], { encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
-    prefix = (pre.stdout ?? '').trim().split('\n').pop();
-    if (pre.status !== 0 || !prefix) fail('npm_failed', `npm prefix -g didn't answer (${(pre.stderr ?? '').trim().split('\n').pop() || `exit ${pre.status}`}): check npm, then run setup again`);
+    prefix = npmPrefix();
     return prefix;
   };
   const seen = (p) => [found, ownBin].some((x) => x && (x === p || sameFile(x, p))); // the same file as an earlier candidate
@@ -231,7 +239,7 @@ function cli() {
   if (!toGlobal) ensureHome(); // ~/.orbit at 0700 before npm makes ~/.orbit/npm in it
   const target = toGlobal ? prefix : own;
   const r = installCli(realpathSync(CLI_ROOT), CLI_STEP_MS, toGlobal ? {} : { prefix: own });
-  if (!r.ok) fail('install_failed', `installing the CLI failed (${r.out.split('\n').filter(Boolean).pop() ?? `exit ${r.status}`}): run setup again`);
+  if (!r.ok) fail('install_failed', `installing the CLI failed (${platform.splitLines(r.out).filter(Boolean).pop() ?? `exit ${r.status}`}): run setup again`);
   const bin = join(target, 'bin', 'orbit');
   const p = probe(bin);
   if (!p.ok || p.version !== UPLINK_VERSION) fail('bad_install', `the installed orbit (${bin}) isn't this copy (${UPLINK_VERSION}) or can't load its dependencies: ${p.out}`);
@@ -242,15 +250,81 @@ function cli() {
   return { result: 'done', note: `installed orbit ${UPLINK_VERSION} in ${own} (a copy: Node's global folder ${prefix} needs admin rights); ${ensurePathLine().note}` };
 }
 
+/** `npm prefix -g` (W6a: on win32 through node + npm-cli.js), its last line (W7). Fails npm_failed when it doesn't answer. */
+function npmPrefix(o = {}) {
+  const pre = platform.runNpm(['prefix', '-g'], { encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] }, o);
+  if (pre.error?.code === 'no_npm') fail('no_npm', platform.nodeWords(o));
+  const prefix = platform.splitLines((pre.stdout ?? '').trim()).pop();
+  if (pre.status !== 0 || !prefix) fail('npm_failed', `npm prefix -g didn't answer (${platform.splitLines((pre.stderr ?? '').trim()).pop() || `exit ${pre.status ?? pre.error?.code}`}): check npm, then run setup again`);
+  return prefix;
+}
+
+/**
+ * Step 2 on win32 (§37.5, W9–W13). Candidates, in order: PATH's orbit (a W4 hit <dir>\orbit.cmd whose <dir>\node_modules\
+ * @airportels\orbit-cli\bin\orbit.js exists: anything else isn't an Orbit install), then npm's global folder through layout()
+ * (W8); each probed as node + its orbit.js (W6b). The first at this version or newer that passes --check-deps is kept. Otherwise it
+ * installs into npm's global folder only (W10: no --prefix, no own folder, no PATH line): a prefix under %VOLTA_HOME% fails
+ * node_manager (W12), one that can't be written (a real create and remove, W11) fails global_not_writable without calling npm.
+ * After installing, orbit.js must print this version (else bad_install, naming it), and which('orbit') must be the install's shim
+ * (W5): none is not_on_path, another is shadowed, with W13's words. Setup never changes PATH (W13).
+ */
+function cliWin(o = {}) {
+  const c = platform.ctx(o);
+  const found = platform.which('orbit', c);
+  let prefix;
+  const globalPrefix = () => (prefix ??= npmPrefix(c));
+  const onPath = (L) => {
+    const hit = platform.which('orbit', c);
+    if (!hit) fail('not_on_path', platform.winNotOnPathFix(prefix));
+    if (!platform.sameInstall(hit, L.shim, c)) fail('shadowed', platform.winShadowedFix(hit, prefix, c));
+  };
+  const candidates = [
+    () => {
+      if (!found || !/\.cmd$/i.test(found)) return null;
+      const js = platform.layout(c.path.dirname(found), c).orbitJs;
+      return c.isFile(js) && { js, where: 'path' };
+    },
+    () => {
+      const L = platform.layout(globalPrefix(), c);
+      if (!c.isFile(L.orbitJs)) return null;
+      if (found && platform.sameInstall(found, L.shim, c)) return null; // the same install as the first candidate
+      return { js: L.orbitJs, where: 'global', L };
+    },
+  ];
+  for (const next of candidates) {
+    const cand = next();
+    if (!cand) continue;
+    const p = probe(cand.js, c);
+    const cmp = p.ok ? compareVersions(p.version, UPLINK_VERSION) : -1;
+    if (cmp < 0) continue;
+    if (cand.where === 'global') onPath(cand.L); // PATH doesn't find it, or finds another orbit first: it fails, nothing installed
+    return { result: 'already', note: cmp > 0 ? `orbit ${p.version} on PATH is newer than this copy (${UPLINK_VERSION}): kept` : `orbit ${p.version} on PATH works` };
+  }
+  globalPrefix();
+  if (platform.underVolta(prefix, c)) fail('node_manager', `npm's global folder ${prefix} is Volta's, which a new terminal doesn't find. ${platform.nodeWords(c)}`);
+  const w = platform.writable(prefix, c);
+  if (!w.ok) fail('global_not_writable', platform.globalNotWritableWords(prefix));
+  let root = o.cliRoot;
+  if (!root) { try { root = c.realpath(CLI_ROOT); } catch { root = CLI_ROOT; } }
+  const r = installCli(root, CLI_STEP_MS, {}, o);
+  if (!r.ok) fail('install_failed', `installing the CLI failed (${platform.splitLines(r.out).filter(Boolean).pop() ?? `exit ${r.status}`}): run setup again`);
+  const L = platform.layout(prefix, c);
+  const p = probe(L.orbitJs, c);
+  if (!p.ok || p.version !== UPLINK_VERSION) fail('bad_install', `the installed orbit (${L.orbitJs}) isn't this copy (${UPLINK_VERSION}) or can't load its dependencies: ${p.out}`);
+  onPath(L);
+  return { result: 'done', note: `installed orbit ${UPLINK_VERSION} under ${prefix} (a copy)` };
+}
+
 function config(args) {
   const home = ensureHome();
   chmodSync(home, 0o700);
   const target = paths.config();
   if (existsSync(target)) {
     let cfg;
-    try { cfg = JSON.parse(readFileSync(target, 'utf8')); } catch { fail('bad_config', `${target} isn't valid JSON: remove ~/.orbit/config.json and rerun setup`); }
+    const shown = platform.isWindows() ? target : '~/.orbit/config.json'; // W20: on win32 the real path, never ~/
+    try { cfg = JSON.parse(readFileSync(target, 'utf8')); } catch { fail('bad_config', `${target} isn't valid JSON: remove ${shown} and rerun setup`); }
     const missing = missingField(cfg);
-    if (missing) fail('config_incomplete', `remove ~/.orbit/config.json and rerun setup, or add ${missing}`);
+    if (missing) fail('config_incomplete', `remove ${shown} and rerun setup, or add ${missing}`);
     chmodSync(target, 0o600);
     return { result: 'already', note: `kept ${target}` };
   }

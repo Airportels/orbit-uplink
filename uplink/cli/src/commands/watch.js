@@ -1,12 +1,13 @@
 // orbit watch [--timeout <s>] [--since <iso>|last] [--json]: block until a ring for this seat arrives, print it, exit 0.
 // Run it as a background command: its exit wakes the session (S8). Exit codes: 0 ring, 2 not enrolled / config, 3 listen error,
-// 4 timeout. Prints the "keep the Mac awake" line on arm (S8 run 2: a sleeping Mac cannot run the turn).
+// 4 timeout. Prints the keep-awake line on arm, in the platform's words (S8 run 2: a sleeping Mac cannot run the turn; §37 W20);
+// §37 W25: on win32 also 129 (SIGHUP) and 149 (SIGBREAK).
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { platform } from 'node:os';
 import { parseArgs } from '../args.js';
 import { requireSeat, orbitHome, writeConfig, readConfig, ensureHome } from '../store.js';
 import { watchForRing } from '../watch.js';
+import { keepAwakeWords } from '../platform.js';
 import { writeFileSync, chmodSync, writeSync } from 'node:fs';
 
 const SKEW_MS = 2000; // clocks differ a little between Mission Control and this device
@@ -26,9 +27,9 @@ function rememberRing(ring) {
 }
 
 /**
- * The documented exit code of a failed watch: 3 listen error · 4 timeout · 130 / 143 stopped by a signal · 2 anything else
- * (no seat, no Firebase config, the RTDB credential or sign-in refused). OrbitError carries exitCode 1 by default, so the
- * code is chosen from `code`, never from that default.
+ * The documented exit code of a failed watch: 3 listen error · 4 timeout · 130 / 143 stopped by a signal (on win32 also 129 SIGHUP
+ * and 149 SIGBREAK, §37 W25) · 2 anything else (no seat, no Firebase config, the RTDB credential or sign-in refused). OrbitError
+ * carries exitCode 1 by default, so the code is chosen from `code`, never from that default.
  */
 export function watchExitCode(e) {
   if (e?.code === 'stopped' && Number.isInteger(e.exitCode)) return e.exitCode;
@@ -53,7 +54,7 @@ export async function run(argv) {
   else if (args.since && args.since !== true) sinceMs = Date.parse(String(args.since)) || sinceMs;
   const timeoutMs = args.timeout && args.timeout !== true ? Number(args.timeout) * 1000 : 0;
   const say = (m) => { if (!args.quiet) writeSync(1, m + '\n'); };
-  const awake = platform() === 'darwin' ? 'Keep this Mac awake while watching: on power with the lid open, or run `caffeinate -i` (S8 run 2: a sleeping Mac cannot run the turn).' : 'Keep this machine awake while watching.';
+  const awake = keepAwakeWords(); // §37 W20: the platform's words (darwin's as before; win32's Settings path)
 
   // The Firebase SDK keeps sockets open, so every path below ends in an explicit process.exit after a synchronous write
   // (a pipe's async write could be lost on exit): 0 ring · 2 config/auth · 3 listen error · 4 timeout · 130/143 signals.

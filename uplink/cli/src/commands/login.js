@@ -20,6 +20,7 @@ import { readConfig, writePerson, readPerson, readPersonRaw, restorePersonRaw, p
 import { authEmulatorHost, identityToolkitBase, webApiKey, decodeJwt } from '../auth.js';
 import { personClient } from '../mc.js';
 import { OrbitError, McError } from '../errors.js';
+import { cmdExe } from '../platform.js';
 
 /** §32.1 line 12: what `orbit login` says when Orbit refuses an account with no invite (403 not_invited). Never the address. */
 export const NOT_INVITED = 'Orbit is invite only: ask an admin to invite your Google account, then run orbit login again';
@@ -95,8 +96,10 @@ signIn(); // the automatic attempt; a browser that blocks it leaves the button f
 </script></body>`;
 }
 
+// §37 W6d: on win32 cmd.exe runs by its full path (ComSpec, else <SystemRoot>\System32\cmd.exe), never a bare `cmd` a working folder
+// could supply. login.js keeps its own platform check (W2's exception).
 function openBrowser(url) {
-  const cmd = platform() === 'darwin' ? ['open', [url]] : platform() === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
+  const cmd = platform() === 'darwin' ? ['open', [url]] : platform() === 'win32' ? [cmdExe(), ['/c', 'start', '', url]] : ['xdg-open', [url]];
   try { spawn(cmd[0], cmd[1], { stdio: 'ignore', detached: true }).unref(); return true; } catch { return false; }
 }
 
@@ -196,7 +199,8 @@ export async function run(argv) {
     config, emulatorUser: args['emulator-user'] && args['emulator-user'] !== true ? args['emulator-user'] : null,
     port: args.port && args.port !== true ? Number(args.port) : 0, open: args.open !== false, handle: args.handle && args.handle !== true ? String(args.handle) : null,
   });
-  if (args.json) console.log(JSON.stringify({ uid: merged.uid, handle: merged.handle, stationIds: merged.stationIds, path: p, mode: fileMode(p) }));
-  else console.log(`signed in as ${merged.handle ?? merged.uid} (station${merged.stationIds.length === 1 ? '' : 's'} ${merged.stationIds.join(', ') || 'none'}); stored in ${p} (mode ${fileMode(p)}). Next: orbit seat add --ground`);
+  const mode = fileMode(p); // §37 W21: null on win32, and the words drop "(mode …)"
+  if (args.json) console.log(JSON.stringify({ uid: merged.uid, handle: merged.handle, stationIds: merged.stationIds, path: p, mode }));
+  else console.log(`signed in as ${merged.handle ?? merged.uid} (station${merged.stationIds.length === 1 ? '' : 's'} ${merged.stationIds.join(', ') || 'none'}); stored in ${p}${mode ? ` (mode ${mode})` : ''}. Next: orbit seat add --ground`);
   return 0;
 }

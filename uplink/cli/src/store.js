@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, renameSy
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { OrbitError } from './errors.js';
+import { hasFileModes } from './platform.js';
 
 export function orbitHome() {
   return process.env.ORBIT_HOME || join(homedir(), '.orbit');
@@ -96,8 +97,12 @@ export function deleteSeat() {
   if (existsSync(p)) unlinkSync(p);
 }
 
-/** mode of a store file as an octal string like "600", or null when missing */
-export function fileMode(p) {
+/**
+ * mode of a store file as an octal string like "600", or null when missing. §37 W21: null on win32 (no POSIX modes there; the chmod
+ * calls above stay, since they don't throw). `o` is platform.js's context (a test's platform).
+ */
+export function fileMode(p, o = {}) {
+  if (!hasFileModes(o)) return null;
   if (!existsSync(p)) return null;
   return (statSync(p).mode & 0o777).toString(8);
 }

@@ -12,6 +12,10 @@ import { getIdToken } from '../auth.js';
 import { personClient } from '../mc.js';
 import { OrbitError, McError } from '../errors.js';
 import { stationFor } from './seat.js';
+import { isWindows } from '../platform.js';
+
+/** §37 W26: Windows has no /dev/tty to ask on: exit 2 no_terminal, and say what to do instead. */
+export const WIN_NO_TERMINAL = 'no terminal to confirm on: on Windows there is no /dev/tty to ask on. Retire seats from a Mac, or pass --yes to retire without a question';
 
 const USAGE = 'orbit admin seats [--all] [--station s] [--json] | orbit admin cancel <taskId> --reason "<text>" [--station s] [--json] | orbit admin retire <seatId> [--force] [--yes] [--station s] [--json]';
 const HINTS = {
@@ -29,8 +33,9 @@ function withHints(e) {
   return e;
 }
 
-/** A yes/no question on the controlling terminal; exit 2 without one (pass --yes to skip the question). */
-function confirmOnTerminal(question) {
+/** A yes/no question on the controlling terminal; exit 2 without one (pass --yes to skip the question), and always on win32 (W26). */
+export function confirmOnTerminal(question, o = {}) {
+  if (isWindows(o)) throw new OrbitError(WIN_NO_TERMINAL, { exitCode: 2, code: 'no_terminal' });
   let fd;
   try {
     fd = openSync('/dev/tty', 'r+');

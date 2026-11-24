@@ -1,11 +1,13 @@
 # `orbit`: the Uplink CLI
 
-`orbit` makes a Mac an Orbit seat: it signs you in, enrols this device, sends work to Orbiters (cloud Claude Code sessions), and
-brings their results home. Node 22 or newer, ESM, one dependency (`firebase`, for the ring listener). The Claude Code plugin in
-`../plugin` wraps it: the SessionStart block, `/orbit:orbit-setup`, `/orbit:orbit-send`, `/orbit:orbit-inbox`, `/orbit:orbit-pull`,
-`/orbit:orbit-status` and the `orbit-watch` skill.
+`orbit` makes a Mac or a Windows PC an Orbit seat: it signs you in, enrols this device, sends work to Orbiters (cloud Claude Code
+sessions), and brings their results home. Node 22 or newer, ESM, one dependency (`firebase`, for the ring listener). The Claude Code
+plugin in `../plugin` wraps it: the SessionStart block, `/orbit:orbit-setup`, `/orbit:orbit-send`, `/orbit:orbit-inbox`,
+`/orbit:orbit-pull`, `/orbit:orbit-status` and the `orbit-watch` skill.
 
-## Set up a Mac
+## Set up a device
+
+**Windows 10 or 11** (Claude Code's native install) first needs Node.js 22 or newer (the nodejs.org Windows Installer, or `winget install OpenJS.NodeJS.LTS`; Scoop and nvm-windows work too, Volta doesn't) and Git for Windows (https://git-scm.com/downloads/win); then open a new terminal.
 
 Orbit is invite only: an admin invites your Google account first. Then, inside Claude Code:
 
@@ -96,14 +98,15 @@ alice's Orbiter.
 
 ## Files and environment
 
-`$ORBIT_HOME` (default `~/.orbit`, mode 0700) holds `config.json`, `person.json` and `seat.json`, all 0600. A key or token is never
-printed. `config.json` is the web config (`mcUrl`, the Firebase web config, `marketplace`): run `orbit setup` (or copy
+`$ORBIT_HOME` (default `~/.orbit`, mode 0700) holds `config.json`, `person.json` and `seat.json`, all 0600. On Windows the default
+is `%USERPROFILE%\.orbit` (your home folder as Node sees it; `HOME` is ignored there), and files have no POSIX modes. A key or token
+is never printed. `config.json` is the web config (`mcUrl`, the Firebase web config, `marketplace`): run `orbit setup` (or copy
 setup/orbit-config.json); `config.example.json` shows its shape. Nothing on the device reaches the factory repo or needs a GitHub
 credential.
 
 | Variable | Meaning |
 | --- | --- |
-| `ORBIT_HOME` | where the three files live |
+| `ORBIT_HOME` | where the three files live (default `~/.orbit`; on Windows `%USERPROFILE%\.orbit`) |
 | `ORBIT_MC_URL` | Mission Control's base URL (overrides `config.json`) |
 | `ORBIT_ENROL_TOKEN` | the orbiter seat token for `orbit enrol` (an environment secret in the cloud) |
 | `ORBIT_DEBUG` | stack traces and the watcher's connection log |
