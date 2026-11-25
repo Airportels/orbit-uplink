@@ -51,10 +51,11 @@ export function checkCallback(body, state) {
 }
 
 /**
- * The sign-in page. A visible "Sign in with Google" button whose click handler calls signInWithPopup (a user gesture, so the
- * browser allows the pop-up). The page also tries once on load; when that attempt is blocked (auth/popup-blocked, the real-target
- * failure of 11-18) or fails for any other reason, the status line names the fix and the button retries. Never signInWithRedirect:
- * the page is served by a one-shot loopback server and a redirect round-trip loses it.
+ * The sign-in page's mechanism (see page() below for its look, §38 X17): a visible "Continue with Google" button whose click handler
+ * calls signInWithPopup (a user gesture, so the browser allows the pop-up). The page also tries once on load; when that attempt is
+ * blocked (auth/popup-blocked, the real-target failure of 11-18) or fails for any other reason, the status line says so in the
+ * reader's language and the button retries. Never signInWithRedirect: the page is served by a one-shot loopback server and a
+ * redirect round-trip loses it.
  */
 /**
  * §38 X17 (0.13.2): the words of the sign-in page, EN and TH. The page picks one set by navigator.language (`th…` is Thai); the HTML

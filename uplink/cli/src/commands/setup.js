@@ -259,6 +259,9 @@ function npmPrefix(o = {}) {
   return prefix;
 }
 
+/** §39 N9 (W12): setup found its orbit only on the registry's Path, which apps started from now on get. */
+export const REGISTRY_PATH_NOTE = 'orbit is installed; apps started from now on find it (quit and reopen the Claude app)';
+
 /**
  * Step 2 on win32 (§37.5, W9–W13). Candidates, in order: PATH's orbit (a W4 hit <dir>\orbit.cmd whose <dir>\node_modules\
  * @airportels\orbit-cli\bin\orbit.js exists: anything else isn't an Orbit install), then npm's global folder through layout()
@@ -266,17 +269,28 @@ function npmPrefix(o = {}) {
  * installs into npm's global folder only (W10: no --prefix, no own folder, no PATH line): a prefix under %VOLTA_HOME% fails
  * node_manager (W12), one that can't be written (a real create and remove, W11) fails global_not_writable without calling npm.
  * After installing, orbit.js must print this version (else bad_install, naming it), and which('orbit') must be the install's shim
- * (W5): none is not_on_path, another is shadowed, with W13's words. Setup never changes PATH (W13).
+ * (W5): none is not_on_path, another is shadowed, with W13's words. Setup never changes PATH (W13). §39 N9 (amends W12): when
+ * this process's PATH has no orbit, the registry's machine Path then user Path are searched the same way (an install's shim found
+ * there is done or already, with REGISTRY_PATH_NOTE).
  */
 function cliWin(o = {}) {
   const c = platform.ctx(o);
   const found = platform.which('orbit', c);
   let prefix;
   const globalPrefix = () => (prefix ??= npmPrefix(c));
+  // → true when only the registry's Path finds it (§39 N9, amends W12): this process's PATH predates the install. Setup only reads.
   const onPath = (L) => {
     const hit = platform.which('orbit', c);
-    if (!hit) fail('not_on_path', platform.winNotOnPathFix(prefix));
-    if (!platform.sameInstall(hit, L.shim, c)) fail('shadowed', platform.winShadowedFix(hit, prefix, c));
+    if (hit) {
+      if (!platform.sameInstall(hit, L.shim, c)) fail('shadowed', platform.winShadowedFix(hit, prefix, c));
+      return false;
+    }
+    // No orbit on this process's PATH: the machine Path, then the user Path, as the registry has them now
+    const reg = platform.registryPaths(c);
+    const regHit = reg ? platform.whichIn('orbit', [reg.machine, reg.user].filter(Boolean).join(';'), c) : null;
+    if (!regHit) fail('not_on_path', platform.winNotOnPathFix(prefix));
+    if (!platform.sameInstall(regHit, L.shim, c)) fail('shadowed', platform.winShadowedFix(regHit, prefix, c));
+    return true;
   };
   const candidates = [
     () => {
@@ -297,8 +311,10 @@ function cliWin(o = {}) {
     const p = probe(cand.js, c);
     const cmp = p.ok ? compareVersions(p.version, UPLINK_VERSION) : -1;
     if (cmp < 0) continue;
-    if (cand.where === 'global') onPath(cand.L); // PATH doesn't find it, or finds another orbit first: it fails, nothing installed
-    return { result: 'already', note: cmp > 0 ? `orbit ${p.version} on PATH is newer than this copy (${UPLINK_VERSION}): kept` : `orbit ${p.version} on PATH works` };
+    // PATH (or, N9, the registry's Path) doesn't find it, or finds another orbit first: it fails, nothing installed
+    const viaRegistry = cand.where === 'global' && onPath(cand.L);
+    const kept = cmp > 0 ? `orbit ${p.version} on PATH is newer than this copy (${UPLINK_VERSION}): kept` : `orbit ${p.version} on PATH works`;
+    return { result: 'already', note: viaRegistry ? `${kept}; ${REGISTRY_PATH_NOTE}` : kept };
   }
   globalPrefix();
   if (platform.underVolta(prefix, c)) fail('node_manager', `npm's global folder ${prefix} is Volta's, which a new terminal doesn't find. ${platform.nodeWords(c)}`);
@@ -311,8 +327,9 @@ function cliWin(o = {}) {
   const L = platform.layout(prefix, c);
   const p = probe(L.orbitJs, c);
   if (!p.ok || p.version !== UPLINK_VERSION) fail('bad_install', `the installed orbit (${L.orbitJs}) isn't this copy (${UPLINK_VERSION}) or can't load its dependencies: ${p.out}`);
-  onPath(L);
-  return { result: 'done', note: `installed orbit ${UPLINK_VERSION} under ${prefix} (a copy)` };
+  const viaRegistry = onPath(L);
+  const note = `installed orbit ${UPLINK_VERSION} under ${prefix} (a copy)`;
+  return { result: 'done', note: viaRegistry ? `${note}; ${REGISTRY_PATH_NOTE}` : note };
 }
 
 function config(args) {

@@ -111,7 +111,65 @@ export const progressLine = (version) => `Fetching Orbit's CLI (version ${versio
 export function gitPath(o = {}) {
   const c = ctx(o);
   const p = which('git', { platform: c.platform, env: c.env, path: c.path, ...(o.exists ? { exists: o.exists } : {}) });
-  return p && c.win && /\.(cmd|bat)$/i.test(p) ? null : p;
+  const onPath = p && c.win && /\.(cmd|bat)$/i.test(p) ? null : p;
+  // §39 N9 (amends X2): on win32, no git.exe on PATH → Git for Windows' known places, the first that's there (platform.js's list)
+  if (!onPath && c.win) return winGitCandidates(c).find((f) => c.exists(f)) ?? null;
+  return onPath;
+}
+
+// ── §39 N9 (0.13.3): the plugin's copy of platform.js's PowerShell read and Git for Windows list (the parity test pins both). ──
+/** N9: the env's value for `k`, its key matched without case (Windows' env is case-insensitive). */
+const envOf = (env, k) => { const key = Object.keys(env).find((x) => x.toUpperCase() === k); return key ? env[key] : undefined; };
+/** N9 (WOW64): a 32-bit Node on 64-bit Windows (PROCESSOR_ARCHITEW6432 set), where System32 and %ProgramFiles% are the 32-bit view. */
+export const isWow64 = (env) => !!envOf(env, 'PROCESSOR_ARCHITEW6432');
+/**
+ * N9: %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe, never a bare `powershell`. Under WOW64
+ * %SystemRoot%\Sysnative\…, the 64-bit PowerShell, which sees the 64-bit registry (a 64-bit Git's InstallPath, the real Path).
+ */
+export function powershellExe(o = {}) {
+  const c = ctx(o);
+  const root = envOf(c.env, 'SYSTEMROOT') || 'C:\\Windows';
+  return win32.join(root, isWow64(c.env) ? 'Sysnative' : 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+/** N9: %ProgramFiles%, or %ProgramW6432% under WOW64 (where a 64-bit Git is installed), else undefined. */
+export const programFilesOf = (env) => (isWow64(env) && envOf(env, 'PROGRAMW6432')) || envOf(env, 'PROGRAMFILES');
+export const psArgs = (script) => ['-NoProfile', '-NonInteractive', '-Command', script];
+const PS_UTF8 = '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ';
+export const GIT_REG_SCRIPT = PS_UTF8 + "foreach ($h in 'HKLM','HKCU') { $v = (Get-ItemProperty -Path ($h + ':\\SOFTWARE\\GitForWindows') -Name InstallPath -ErrorAction SilentlyContinue).InstallPath; if ($v) { $h + '=' + $v } }";
+export const PS_TIMEOUT_MS = 10_000;
+/** N9: one script's output lines (UTF-8), or null when it didn't answer. */
+export function powershellLines(script, o = {}) {
+  const c = ctx(o);
+  const r = c.run(powershellExe(c), psArgs(script), { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: PS_TIMEOUT_MS, windowsHide: true });
+  if (!r || r.error || r.status !== 0) return null;
+  return String(r.stdout ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+}
+/** N9: HKLM, then HKCU, GitForWindows InstallPath\cmd\git.exe; %ProgramFiles%\Git\cmd\git.exe (%ProgramW6432% under WOW64); %LOCALAPPDATA%\Programs\Git\cmd\git.exe. */
+export function winGitCandidates(o = {}) {
+  const c = ctx(o);
+  if (!c.win) return [];
+  const env = (k) => { const key = Object.keys(c.env).find((x) => x.toUpperCase() === k); return key ? c.env[key] : undefined; };
+  const lines = powershellLines(GIT_REG_SCRIPT, c) ?? [];
+  const reg = Object.fromEntries(lines.map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]).filter(([k]) => k));
+  const out = [];
+  for (const h of ['HKLM', 'HKCU']) if (reg[h]) out.push(win32.join(reg[h], 'cmd', 'git.exe'));
+  const pf = programFilesOf(c.env);
+  if (pf) out.push(win32.join(pf, 'Git', 'cmd', 'git.exe'));
+  if (env('LOCALAPPDATA')) out.push(win32.join(env('LOCALAPPDATA'), 'Programs', 'Git', 'cmd', 'git.exe'));
+  return out;
+}
+
+/**
+ * §39 N9 (amends W17): the launcher's child environment: dirname(execPath) first on PATH (win32: the PATH key matched without
+ * case, `;`; POSIX `:`), so setup's `node` and `npm` are the ones this Node came with. Nothing else is added.
+ */
+export function nodeFirstEnv(env = process.env, execPath = process.execPath, platform = process.platform) {
+  const win = platform === 'win32';
+  const dir = (win ? win32 : posix).dirname(execPath);
+  const out = { ...env };
+  const key = win ? (Object.keys(out).find((k) => k.toUpperCase() === 'PATH') ?? 'Path') : 'PATH';
+  out[key] = out[key] ? `${dir}${win ? ';' : ':'}${out[key]}` : dir;
+  return out;
 }
 
 /** A package.json's { name, version }, or null when there is none or it can't be read. */

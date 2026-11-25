@@ -10,6 +10,9 @@ commands and the `orbit-watch` skill) and the `orbit` command-line tool.
 ## You need
 
 - macOS, or Windows 10 or 11.
+- Node.js 22 or newer, and git. **`/orbit:orbit-setup` offers to install Node.js and Git** when they're missing: Node.js 24 from
+  winget (Windows) or nodejs.org (Mac), and Git from winget (Windows) or Apple's Command Line Tools (Mac). An administrator approves
+  each install: a Windows prompt, or an administrator's name and password in the Mac Installer. To install them yourself instead:
 - Node.js 22 or newer.
   - On a Mac: download the macOS installer from https://nodejs.org and open it. Or, if you use Homebrew, `brew install node`, or
     nvm.
@@ -23,8 +26,8 @@ commands and the `orbit-watch` skill) and the `orbit` command-line tool.
 - The Claude desktop app (its **Code** tab), or Claude Code in a terminal.
 - The Google account an admin invited.
 
-After installing Node.js or git, quit and reopen the Claude app (or your terminal) and start a new Claude Code session before you go
-on.
+If you install Node.js or git yourself, quit and reopen the Claude app (or your terminal) and start a new Claude Code session before
+you go on. When setup installs them, it goes on in the same session; on Windows, quit and reopen the Claude app afterwards.
 
 ## Set up this computer
 
@@ -100,6 +103,25 @@ loads your installed plugins and runs their SessionStart hooks. Otherwise use th
 
 **"… checkout … not found … /plugin marketplace add".** Your Orbit plugin is older than 0.13.2. Remove it in **Customize → Plugins**,
 and add it again (the click path above).
+
+**"Your Node.js (…) comes from … and is older than 22".** A version manager (nvm, Volta, fnm, asdf, mise, n, nvm-windows) or
+Homebrew, Scoop or Chocolatey manages your Node.js, so setup won't install over it. Update it there with the command setup names,
+then start a new session and run /orbit:orbit-setup again.
+
+**"This computer's policy blocked installing …" (Windows).** An organisation's policy blocks winget installs. Ask IT to install
+Node.js 22 or newer and Git for Windows.
+
+**"winget isn't available on this PC" (Windows).** Update **App Installer** from the Microsoft Store, or install Node.js and Git
+yourself (above), then run /orbit:orbit-setup again.
+
+**"Git on this Mac needs the Xcode licence accepted".** Open Xcode once and accept the licence (or run
+`sudo xcodebuild -license accept` in Terminal yourself), then start a new session and run /orbit:orbit-setup again.
+
+**"This Mac is set to use developer tools from a folder that no longer exists".** Run `sudo xcode-select --reset` in Terminal
+yourself, then start a new session and run /orbit:orbit-setup again.
+
+**"Git on this Mac doesn't run".** Run `xcode-select --install` in Terminal yourself, then start a new session and run
+/orbit:orbit-setup again.
 
 **`not_on_path` (Windows).** npm's global folder isn't on your PATH. Press Win+R and run
 `rundll32 sysdm.cpl,EditEnvironmentVariables`. Under your user variables select Path, click Edit, then New, paste the folder setup

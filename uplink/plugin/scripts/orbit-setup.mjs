@@ -5,7 +5,8 @@
 //      synced plugin only a clone at the plugin's version), or X7's step 5 (the source copy at the plugin's version, taken when
 //      fetch-cli.mjs's checkCopy says it is one);
 //   2. otherwise it fetches the source copy (X2, 120 s) and runs that copy's uplink/cli/bin/orbit.js.
-// Either way it runs it with this Node (process.execPath), inherited stdio and its arguments as they are, and exits with the child's
+// Either way it runs it with this Node (process.execPath), inherited stdio, this Node's folder first on PATH (§39 N9) and its
+// arguments as they are, and exits with the child's
 // exit code. The fetch's progress line goes to stderr only, so `setup --json` still prints one JSON object on stdout (§35.2). A failed
 // fetch prints why (the URL, the tag, and "check the network and run /orbit:orbit-setup again" where that is the cause) and the paths
 // it tried to stderr, prints nothing on stdout, and exits 1. After a setup that exits 0, it prunes the source copies (X4: the two
@@ -14,7 +15,7 @@ import { spawn } from 'node:child_process';
 import { constants } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { findClone, pluginVersion } from '../hooks/find-cli.mjs';
-import { FETCH_TIMEOUT_MS, checkCopy, copyDir, ensureCopy, progressLine, pruneCopies } from './fetch-cli.mjs';
+import { FETCH_TIMEOUT_MS, checkCopy, copyDir, ensureCopy, nodeFirstEnv, progressLine, pruneCopies } from './fetch-cli.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const args = process.argv.slice(2);
@@ -35,7 +36,8 @@ if (!js) {
   }
   js = r.js;
 }
-const child = spawn(process.execPath, [js, ...args], { stdio: 'inherit' });
+// §39 N9 (amends W17): this Node's folder first on the child's PATH, so setup's node and npm are the ones just installed
+const child = spawn(process.execPath, [js, ...args], { stdio: 'inherit', env: nodeFirstEnv() });
 // The person's Ctrl-C reaches the child too (same console): this launcher waits for it and exits as it does. Any other stop is
 // passed on to the child.
 process.on('SIGINT', () => {});

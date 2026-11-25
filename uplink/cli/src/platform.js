@@ -211,6 +211,78 @@ export function cmdExe(o = {}) {
   return win32.join(root, 'System32', 'cmd.exe');
 }
 
+// ── §39 N9 (0.13.3): Windows PowerShell 5.1 by its absolute path, for the two registry reads setup needs (git's InstallPath, and
+// the machine and user Path a just-installed program is on). The plugin's fetch-cli.mjs carries the same constants and list; the
+// parity test (source-copy.test.mjs) pins that both give the same argv and candidates. ──
+
+/** N9: the env's value for `k`, its key matched without case (Windows' env is case-insensitive). */
+const envOf = (env, k) => { const key = Object.keys(env).find((x) => x.toUpperCase() === k); return key ? env[key] : undefined; };
+/** N9 (WOW64): a 32-bit Node on 64-bit Windows (PROCESSOR_ARCHITEW6432 set), where System32 and %ProgramFiles% are the 32-bit view. */
+export const isWow64 = (env) => !!envOf(env, 'PROCESSOR_ARCHITEW6432');
+/**
+ * N9: %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe, never a bare `powershell` a working folder could supply. Under WOW64
+ * %SystemRoot%\Sysnative\…, the 64-bit PowerShell, which sees the 64-bit registry (a 64-bit Git's InstallPath, the real Path).
+ */
+export function powershellExe(o = {}) {
+  const c = ctx(o);
+  const root = envOf(c.env, 'SYSTEMROOT') || 'C:\\Windows';
+  return win32.join(root, isWow64(c.env) ? 'Sysnative' : 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+/** N9: %ProgramFiles%, or %ProgramW6432% under WOW64 (where a 64-bit Git is installed), else undefined. */
+export const programFilesOf = (env) => (isWow64(env) && envOf(env, 'PROGRAMW6432')) || envOf(env, 'PROGRAMFILES');
+/** N9: the argv for one script: no profile, no prompt. */
+export const psArgs = (script) => ['-NoProfile', '-NonInteractive', '-Command', script];
+const PS_UTF8 = '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ';
+/** N9: GitForWindows' InstallPath, HKLM then HKCU, as `HKLM=<path>` / `HKCU=<path>` lines. */
+export const GIT_REG_SCRIPT = PS_UTF8 + "foreach ($h in 'HKLM','HKCU') { $v = (Get-ItemProperty -Path ($h + ':\\SOFTWARE\\GitForWindows') -Name InstallPath -ErrorAction SilentlyContinue).InstallPath; if ($v) { $h + '=' + $v } }";
+/** N9 (W12): the machine and user Path, already expanded, as `MACHINE=<path>` and `USER=<path>` lines. */
+export const PATH_REG_SCRIPT = PS_UTF8 + "'MACHINE=' + [Environment]::GetEnvironmentVariable('Path','Machine'); 'USER=' + [Environment]::GetEnvironmentVariable('Path','User')";
+export const PS_TIMEOUT_MS = 10_000;
+
+/** N9: run one script through powershellExe (UTF-8 output). → its output lines, or null when it didn't answer (exit, timeout). */
+export function powershellLines(script, o = {}) {
+  const c = ctx(o);
+  const r = c.run(powershellExe(c), psArgs(script), { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: PS_TIMEOUT_MS, windowsHide: true });
+  if (!r || r.error || r.status !== 0) return null;
+  return splitLines(String(r.stdout ?? '')).map((l) => l.trim()).filter(Boolean);
+}
+
+/** `KEY=value` lines → { KEY: value } (the first `=` splits). */
+const keyed = (lines) => Object.fromEntries((lines ?? []).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]).filter(([k]) => k));
+
+/**
+ * N9 (amends W4 and X2): where Git for Windows may be when PATH has no git.exe, in order: HKLM, then HKCU, GitForWindows
+ * InstallPath\cmd\git.exe; %ProgramFiles%\Git\cmd\git.exe (%ProgramW6432% under WOW64); %LOCALAPPDATA%\Programs\Git\cmd\git.exe. win32 only (else []).
+ */
+export function winGitCandidates(o = {}) {
+  const c = ctx(o);
+  if (!c.win) return [];
+  const env = (k) => { const key = Object.keys(c.env).find((x) => x.toUpperCase() === k); return key ? c.env[key] : undefined; };
+  const reg = keyed(powershellLines(GIT_REG_SCRIPT, c));
+  const out = [];
+  for (const h of ['HKLM', 'HKCU']) if (reg[h]) out.push(win32.join(reg[h], 'cmd', 'git.exe'));
+  const pf = programFilesOf(c.env);
+  if (pf) out.push(win32.join(pf, 'Git', 'cmd', 'git.exe'));
+  if (env('LOCALAPPDATA')) out.push(win32.join(env('LOCALAPPDATA'), 'Programs', 'Git', 'cmd', 'git.exe'));
+  return out;
+}
+
+/** N9 (W12): the machine and user Path from the registry, already expanded, or null when the call fails. */
+export function registryPaths(o = {}) {
+  const lines = powershellLines(PATH_REG_SCRIPT, o);
+  if (!lines) return null;
+  const k = keyed(lines);
+  return { machine: k.MACHINE ?? '', user: k.USER ?? '' };
+}
+
+/** W4's which over a given Path value instead of the env's (the env's own PATH key, any case, replaced). */
+export function whichIn(name, pathStr, o = {}) {
+  const c = ctx(o);
+  const env = Object.fromEntries(Object.entries(c.env).filter(([k]) => k.toUpperCase() !== 'PATH'));
+  env.Path = pathStr;
+  return which(name, { ...o, platform: c.platform, env });
+}
+
 /** W6c: what claude's arguments may be when it runs through cmd.exe. */
 export const SAFE_ARG = /^[A-Za-z0-9@._-]+$/;
 
@@ -248,6 +320,8 @@ export function toolPath(name, o = {}) {
   if (cache && found.has(name)) return found.get(name);
   let p = which(name, c);
   if (p && c.win && /\.(cmd|bat)$/i.test(p)) p = null;
+  // §39 N9 (amends W4): on win32, no git.exe on PATH → Git for Windows' known places, the first that's there
+  if (!p && c.win && name === 'git') p = winGitCandidates(c).find((f) => c.exists(f)) ?? null;
   if (cache) found.set(name, p);
   return p;
 }
